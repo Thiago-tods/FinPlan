@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../core/services/theme_preferences.dart';
 import 'home_shell.dart';
 import 'theme/app_theme.dart';
 
@@ -13,13 +14,45 @@ class FinPlanApp extends StatefulWidget {
 
 class _FinPlanAppState extends State<FinPlanApp> {
   ThemeMode _themeMode = ThemeMode.light;
+  bool _isInitialized = false;
 
-  void _toggleTheme() {
+  @override
+  void initState() {
+    super.initState();
+    _loadTheme();
+  }
+
+  Future<void> _loadTheme() async {
+    try {
+      final isDark = await ThemePreferences.loadIsDark();
+
+      if (!mounted) return;
+
+      setState(() {
+        _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
+        _isInitialized = true;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _isInitialized = true;
+      });
+    }
+  }
+
+  Future<void> _toggleTheme() async {
+    final newTheme = _themeMode == ThemeMode.light
+        ? ThemeMode.dark
+        : ThemeMode.light;
+
     setState(() {
-      _themeMode = _themeMode == ThemeMode.light
-          ? ThemeMode.dark
-          : ThemeMode.light;
+      _themeMode = newTheme;
     });
+
+    await ThemePreferences.saveIsDark(
+      newTheme == ThemeMode.dark,
+    );
   }
 
   @override
@@ -30,10 +63,16 @@ class _FinPlanAppState extends State<FinPlanApp> {
       themeMode: _themeMode,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      home: HomeShell(
-        isDark: _themeMode == ThemeMode.dark,
-        onToggleTheme: _toggleTheme,
-      ),
+      home: _isInitialized
+          ? HomeShell(
+              isDark: _themeMode == ThemeMode.dark,
+              onToggleTheme: _toggleTheme,
+            )
+          : const Scaffold(
+              body: Center(
+                child: CircularProgressIndicator(),
+              ),
+            ),
     );
   }
 }
