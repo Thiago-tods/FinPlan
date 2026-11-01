@@ -1,13 +1,19 @@
 
 import 'package:flutter/material.dart';
 
+import '../../../accounts/application/accounts_store.dart';
 import '../widgets/balance_card.dart';
 import '../widgets/financial_summary.dart';
 import '../widgets/planning_card.dart';
 import '../widgets/upcoming_bills.dart';
 
 class DashboardPage extends StatelessWidget {
-  const DashboardPage({super.key});
+  final AccountsStore accountsStore;
+
+  const DashboardPage({
+    super.key,
+    required this.accountsStore,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -39,7 +45,9 @@ class DashboardPage extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
 
-                  const BalanceCard(),
+                  BalanceCard(
+                    accountsStore: accountsStore,
+                  ),
 
                   const SizedBox(height: 20),
 

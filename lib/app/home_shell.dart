@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 
 import '../core/widgets/placeholder_page.dart';
+import '../features/accounts/application/accounts_store.dart';
+import '../features/accounts/presentation/pages/accounts_page.dart';
 import '../features/dashboard/presentation/pages/dashboard_page.dart';
 
 class HomeShell extends StatefulWidget {
@@ -21,10 +23,25 @@ class HomeShell extends StatefulWidget {
 class _HomeShellState extends State<HomeShell> {
   int _selectedIndex = 0;
 
+  final AccountsStore _accountsStore = AccountsStore();
+
+  @override
+  void initState() {
+    super.initState();
+    _accountsStore.loadAccounts();
+  }
+
+  @override
+  void dispose() {
+    _accountsStore.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final pages = [
-      const DashboardPage(),
+      DashboardPage(accountsStore: _accountsStore),
+      AccountsPage(accountsStore: _accountsStore),
       const PlaceholderPage(
         title: 'Movimentações',
         icon: Icons.swap_horiz_rounded,
@@ -81,6 +98,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard_rounded),
             label: 'Início',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.account_balance_wallet_outlined),
+            selectedIcon: Icon(Icons.account_balance_wallet_rounded),
+            label: 'Contas',
           ),
           NavigationDestination(
             icon: Icon(Icons.swap_horiz_rounded),
