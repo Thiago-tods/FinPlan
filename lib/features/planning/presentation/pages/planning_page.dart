@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../../../accounts/application/accounts_store.dart';
@@ -5,11 +6,14 @@ import '../../../accounts/domain/entities/bank_account.dart';
 import '../../../transactions/application/transactions_store.dart';
 import '../../../transactions/domain/entities/transaction.dart';
 import '../../application/planning_store.dart';
+import '../../domain/entities/early_payment_recommendation.dart';
 import '../../domain/entities/payable_bill.dart';
+import '../../domain/services/early_payment_service.dart';
 import '../widgets/bill_list_tile.dart';
 import '../widgets/planning_summary.dart';
-import 'bill_form_page.dart';
 import '../widgets/cash_flow_projection_section.dart';
+import '../widgets/early_payment_recommendations_section.dart';
+import 'bill_form_page.dart';
 
 class PlanningPage extends StatefulWidget {
   final PlanningStore planningStore;
@@ -30,22 +34,62 @@ class PlanningPage extends StatefulWidget {
 class _PlanningPageState extends State<PlanningPage> {
   BillStatus? _selectedFilter;
 
+  final EarlyPaymentService _earlyPaymentService = EarlyPaymentService();
+
   @override
   void initState() {
     super.initState();
     widget.planningStore.addListener(_refresh);
     widget.accountsStore.addListener(_refresh);
+    widget.transactionsStore.addListener(_refresh);
   }
 
   @override
   void dispose() {
     widget.planningStore.removeListener(_refresh);
     widget.accountsStore.removeListener(_refresh);
+    widget.transactionsStore.removeListener(_refresh);
     super.dispose();
   }
 
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  double get _currentBalance {
+    return widget.accountsStore.accounts.fold(
+      0.0,
+      (total, account) {
+        return total +
+            widget.transactionsStore.balanceForAccount(
+              accountId: account.id,
+              initialBalance: account.initialBalance,
+            );
+      },
+    );
+  }
+
+  List<EarlyPaymentRecommendation> get _earlyPaymentRecommendations {
+    return _earlyPaymentService.recommend(
+      currentBalance: _currentBalance,
+      transactions: widget.transactionsStore.transactions,
+      bills: widget.planningStore.bills,
+    );
+  }
+
+  Future<void> _payRecommendedBill(String billId) async {
+    PayableBill? selectedBill;
+
+    for (final bill in widget.planningStore.bills) {
+      if (bill.id == billId) {
+        selectedBill = bill;
+        break;
+      }
+    }
+
+    if (selectedBill == null || !mounted) return;
+
+    await _payBill(selectedBill);
   }
 
   List<PayableBill> get _filteredBills {
@@ -348,6 +392,7 @@ class _PlanningPageState extends State<PlanningPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final bills = _filteredBills;
+    final recommendations = _earlyPaymentRecommendations;
 
     return Scaffold(
       floatingActionButton: FloatingActionButton.extended(
@@ -381,6 +426,11 @@ class _PlanningPageState extends State<PlanningPage> {
                   accountsStore: widget.accountsStore,
                   transactionsStore: widget.transactionsStore,
                   planningStore: widget.planningStore,
+                ),
+                const SizedBox(height: 28),
+                EarlyPaymentRecommendationsSection(
+                  recommendations: recommendations,
+                  onPayBill: _payRecommendedBill,
                 ),
                 const SizedBox(height: 28),
                 Text(
