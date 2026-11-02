@@ -1,4 +1,4 @@
-
+﻿
 import 'package:flutter/material.dart';
 
 import '../../../accounts/application/accounts_store.dart';
@@ -113,7 +113,13 @@ class _PlanningPageState extends State<PlanningPage> {
   Future<void> _openForm({PayableBill? bill}) async {
     final result = await Navigator.push<PayableBill>(
       context,
-      MaterialPageRoute(builder: (_) => BillFormPage(bill: bill)),
+      MaterialPageRoute(
+        builder: (_) => BillFormPage(
+          bill: bill,
+          transactionsStore: widget.transactionsStore,
+          planningStore: widget.planningStore,
+        ),
+      ),
     );
 
     if (result == null || !mounted) return;
@@ -136,7 +142,7 @@ class _PlanningPageState extends State<PlanningPage> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Não foi possível salvar: $error')),
+        SnackBar(content: Text('NÃ£o foi possÃ­vel salvar: $error')),
       );
     }
   }
@@ -149,7 +155,7 @@ class _PlanningPageState extends State<PlanningPage> {
     if (accounts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Cadastre uma conta bancária antes de pagar.'),
+          content: Text('Cadastre uma conta bancÃ¡ria antes de pagar.'),
         ),
       );
       return;
@@ -223,8 +229,8 @@ class _PlanningPageState extends State<PlanningPage> {
                   ),
                   const SizedBox(height: 12),
                   const Text(
-                    'A confirmação registrará uma despesa no histórico '
-                    'financeiro e atualizará o saldo da conta selecionada.',
+                    'A confirmaÃ§Ã£o registrarÃ¡ uma despesa no histÃ³rico '
+                    'financeiro e atualizarÃ¡ o saldo da conta selecionada.',
                     style: TextStyle(fontSize: 12),
                   ),
                 ],
@@ -249,9 +255,30 @@ class _PlanningPageState extends State<PlanningPage> {
 
     if (confirmed != true || selectedAccountId == null || !mounted) return;
 
-    final transactionId = 'bill-${bill.id}';
-
     try {
+      FinancialTransaction? linkedTransaction;
+
+      if (bill.linkedPendingTransactionId != null) {
+        for (final existingTransaction
+            in widget.transactionsStore.transactions) {
+          if (existingTransaction.id == bill.linkedPendingTransactionId) {
+            linkedTransaction = existingTransaction;
+            break;
+          }
+        }
+
+        if (linkedTransaction == null ||
+            linkedTransaction.status != TransactionStatus.pending ||
+            linkedTransaction.type != TransactionType.expense) {
+          throw StateError(
+            'A despesa pendente vinculada não foi encontrada ou não está mais disponível.',
+          );
+        }
+      }
+
+      final transactionId =
+          linkedTransaction?.id ?? 'bill-${bill.id}';
+
       final transaction = FinancialTransaction(
         id: transactionId,
         description: bill.description,
@@ -262,9 +289,9 @@ class _PlanningPageState extends State<PlanningPage> {
         transactionDate: paymentDate,
         dueDate: bill.dueDate,
         status: TransactionStatus.completed,
-        notes:
+        notes: linkedTransaction?.notes ??
             'Pagamento gerado pelo Planejamento do FinPlan. '
-            'Conta: ${bill.id}',
+                'Conta: ${bill.id}',
       );
 
       await widget.transactionsStore.saveTransaction(transaction);
@@ -345,7 +372,7 @@ class _PlanningPageState extends State<PlanningPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Contas com pagamento registrado não podem ser excluídas.',
+            'Contas com pagamento registrado nÃ£o podem ser excluÃ­das.',
           ),
         ),
       );
@@ -504,7 +531,7 @@ class _PlanningPageState extends State<PlanningPage> {
                             ),
                             const SizedBox(height: 6),
                             Text(
-                              'Cadastre uma conta para começar seu planejamento.',
+                              'Cadastre uma conta para comeÃ§ar seu planejamento.',
                               textAlign: TextAlign.center,
                               style: theme.textTheme.bodySmall,
                             ),
@@ -537,3 +564,4 @@ class _PlanningPageState extends State<PlanningPage> {
     );
   }
 }
+

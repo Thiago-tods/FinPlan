@@ -1,4 +1,4 @@
-import 'package:flutter_test/flutter_test.dart';
+﻿import 'package:flutter_test/flutter_test.dart';
 
 import 'package:finplan/features/planning/domain/entities/payable_bill.dart';
 import 'package:finplan/features/planning/domain/services/cash_flow_service.dart';
@@ -38,6 +38,7 @@ void main() {
     required double amount,
     required BillStatus status,
     required DateTime dueDate,
+    String? linkedPendingTransactionId,
   }) {
     return PayableBill(
       id: id,
@@ -46,6 +47,7 @@ void main() {
       category: BillCategory.other,
       dueDate: dueDate,
       status: status,
+      linkedPendingTransactionId: linkedPendingTransactionId,
     );
   }
 
@@ -210,6 +212,64 @@ void main() {
         ),
         throwsArgumentError,
       );
+    });
+
+    test('não contabiliza duas vezes uma despesa vinculada', () {
+      final projection = service.project(
+        currentBalance: 1000,
+        referenceDate: referenceDate,
+        days: 7,
+        transactions: [
+          createTransaction(
+            id: 'transaction-1',
+            amount: 180,
+            type: TransactionType.expense,
+            status: TransactionStatus.pending,
+            dueDate: DateTime(2026, 11, 4),
+          ),
+        ],
+        bills: [
+          createBill(
+            id: 'bill-1',
+            amount: 180,
+            status: BillStatus.pending,
+            dueDate: DateTime(2026, 11, 5),
+            linkedPendingTransactionId: 'transaction-1',
+          ),
+        ],
+      );
+
+      expect(projection.totalExpenses, 180);
+      expect(projection.projectedBalance, 820);
+    });
+
+    test('contabiliza transação quando a conta vinculada não está pendente', () {
+      final projection = service.project(
+        currentBalance: 1000,
+        referenceDate: referenceDate,
+        days: 7,
+        transactions: [
+          createTransaction(
+            id: 'transaction-1',
+            amount: 180,
+            type: TransactionType.expense,
+            status: TransactionStatus.pending,
+            dueDate: DateTime(2026, 11, 4),
+          ),
+        ],
+        bills: [
+          createBill(
+            id: 'bill-1',
+            amount: 180,
+            status: BillStatus.cancelled,
+            dueDate: DateTime(2026, 11, 5),
+            linkedPendingTransactionId: 'transaction-1',
+          ),
+        ],
+      );
+
+      expect(projection.totalExpenses, 180);
+      expect(projection.projectedBalance, 820);
     });
   });
 }

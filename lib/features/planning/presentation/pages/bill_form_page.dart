@@ -1,13 +1,21 @@
+
 import 'package:flutter/material.dart';
 
+import '../../../transactions/application/transactions_store.dart';
+import '../../../transactions/domain/entities/transaction.dart';
+import '../../application/planning_store.dart';
 import '../../domain/entities/payable_bill.dart';
 
 class BillFormPage extends StatefulWidget {
   final PayableBill? bill;
+  final TransactionsStore? transactionsStore;
+  final PlanningStore? planningStore;
 
   const BillFormPage({
     super.key,
     this.bill,
+    this.transactionsStore,
+    this.planningStore,
   });
 
   @override
@@ -26,7 +34,28 @@ class _BillFormPageState extends State<BillFormPage> {
   late DateTime _dueDate;
   DateTime? _discountDeadline;
 
+  late String _selectedPendingTransactionId;
+
   bool get _isEditing => widget.bill != null;
+
+  List<FinancialTransaction> get _availablePendingExpenses {
+    final transactions = widget.transactionsStore?.transactions ?? [];
+    final bills = widget.planningStore?.bills ?? [];
+
+    final linkedByOtherBills = bills
+        .where((bill) => bill.id != widget.bill?.id)
+        .map((bill) => bill.linkedPendingTransactionId)
+        .whereType<String>()
+        .toSet();
+
+    return transactions.where((transaction) {
+      return transaction.status == TransactionStatus.pending &&
+          transaction.type == TransactionType.expense &&
+          (!linkedByOtherBills.contains(transaction.id) ||
+              transaction.id == _selectedPendingTransactionId);
+    }).toList()
+      ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
+  }
 
   @override
   void initState() {
@@ -57,6 +86,9 @@ class _BillFormPageState extends State<BillFormPage> {
     _category = bill?.category ?? BillCategory.other;
     _dueDate = bill?.dueDate ?? DateTime.now();
     _discountDeadline = bill?.discountDeadline;
+
+    _selectedPendingTransactionId =
+        bill?.linkedPendingTransactionId ?? '';
   }
 
   @override
@@ -88,6 +120,10 @@ class _BillFormPageState extends State<BillFormPage> {
     final month = date.month.toString().padLeft(2, '0');
 
     return '$day/$month/${date.year}';
+  }
+
+  String _currency(double value) {
+    return 'R\$ ${value.toStringAsFixed(2).replaceAll('.', ',')}';
   }
 
   Future<void> _selectDate({required bool isDiscountDate}) async {
@@ -174,6 +210,10 @@ class _BillFormPageState extends State<BillFormPage> {
       paidAt: widget.bill?.paidAt,
       accountId: widget.bill?.accountId,
       linkedTransactionId: widget.bill?.linkedTransactionId,
+      linkedPendingTransactionId:
+          _selectedPendingTransactionId.isEmpty
+              ? null
+              : _selectedPendingTransactionId,
       notes: _notesController.text.trim(),
     );
 
@@ -184,6 +224,16 @@ class _BillFormPageState extends State<BillFormPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final availableTransactions = _availablePendingExpenses;
+
+    final selectedTransactionExists = availableTransactions.any(
+      (transaction) =>
+          transaction.id == _selectedPendingTransactionId,
+    );
+
+    final hasUnavailableLink =
+        _selectedPendingTransactionId.isNotEmpty &&
+        !selectedTransactionExists;
 
     return Scaffold(
       appBar: AppBar(
@@ -284,6 +334,59 @@ class _BillFormPageState extends State<BillFormPage> {
                     style: OutlinedButton.styleFrom(
                       minimumSize: const Size.fromHeight(52),
                     ),
+                  ),
+                  const SizedBox(height: 24),
+                  Text(
+                    'Vincular despesa pendente',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Selecione uma despesa já cadastrada para representar '
+                    'esta mesma obrigação financeira.',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    initialValue: _selectedPendingTransactionId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Transação existente (opcional)',
+                      prefixIcon: Icon(Icons.link_rounded),
+                      border: OutlineInputBorder(),
+                    ),
+                    items: [
+                      const DropdownMenuItem(
+                        value: '',
+                        child: Text('Não vincular'),
+                      ),
+                      ...availableTransactions.map((transaction) {
+                        return DropdownMenuItem(
+                          value: transaction.id,
+                          child: Text(
+                            '${transaction.description} — '
+                            '${_currency(transaction.amount)}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      }),
+                      if (hasUnavailableLink)
+                        DropdownMenuItem(
+                          value: _selectedPendingTransactionId,
+                          enabled: false,
+                          child: const Text(
+                            'Vínculo indisponível — selecione outro',
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedPendingTransactionId = value ?? '';
+                      });
+                    },
                   ),
                   const SizedBox(height: 24),
                   Text(

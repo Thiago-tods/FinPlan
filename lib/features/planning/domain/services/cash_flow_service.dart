@@ -1,4 +1,4 @@
-import '../entities/cash_flow_projection.dart';
+﻿import '../entities/cash_flow_projection.dart';
 import '../entities/payable_bill.dart';
 import '../../../transactions/domain/entities/transaction.dart';
 
@@ -27,6 +27,13 @@ class CashFlowService {
     final dailyIncome = <DateTime, double>{};
     final dailyExpenses = <DateTime, double>{};
 
+    // Identifica transações já representadas por contas pendentes.
+    final linkedPendingTransactionIds = bills
+        .where((bill) => bill.status == BillStatus.pending)
+        .map((bill) => bill.linkedPendingTransactionId)
+        .whereType<String>()
+        .toSet();
+
     void addEvent({
       required DateTime date,
       required double amount,
@@ -51,6 +58,11 @@ class CashFlowService {
 
     for (final transaction in transactions) {
       if (transaction.status != TransactionStatus.pending) {
+        continue;
+      }
+
+      // A conta a pagar já representa esta obrigação.
+      if (linkedPendingTransactionIds.contains(transaction.id)) {
         continue;
       }
 

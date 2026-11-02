@@ -1,3 +1,4 @@
+
 enum BillCategory {
   housing,
   utilities,
@@ -65,7 +66,13 @@ class PayableBill {
   final BillStatus status;
   final DateTime? paidAt;
   final String? accountId;
+
+  // Transação pendente que representa esta obrigação.
+  final String? linkedPendingTransactionId;
+
+  // Transação efetivamente registrada após o pagamento.
   final String? linkedTransactionId;
+
   final String notes;
 
   const PayableBill({
@@ -79,6 +86,7 @@ class PayableBill {
     this.status = BillStatus.pending,
     this.paidAt,
     this.accountId,
+    this.linkedPendingTransactionId,
     this.linkedTransactionId,
     this.notes = '',
   });
@@ -122,6 +130,7 @@ class PayableBill {
       'status': status.name,
       'paidAt': paidAt?.toIso8601String(),
       'accountId': accountId,
+      'linkedPendingTransactionId': linkedPendingTransactionId,
       'linkedTransactionId': linkedTransactionId,
       'notes': notes,
     };
@@ -149,6 +158,8 @@ class PayableBill {
           ? null
           : DateTime.parse(json['paidAt'] as String),
       accountId: json['accountId'] as String?,
+      linkedPendingTransactionId:
+          json['linkedPendingTransactionId'] as String?,
       linkedTransactionId: json['linkedTransactionId'] as String?,
       notes: json['notes'] as String? ?? '',
     );

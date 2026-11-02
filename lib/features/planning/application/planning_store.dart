@@ -1,3 +1,4 @@
+
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -118,6 +119,23 @@ class PlanningStore extends ChangeNotifier {
       }
     }
 
+    final linkedPendingTransactionId =
+        bill.linkedPendingTransactionId;
+
+    if (linkedPendingTransactionId != null) {
+      final alreadyLinked = _bills.any((existingBill) {
+        return existingBill.id != bill.id &&
+            existingBill.linkedPendingTransactionId ==
+                linkedPendingTransactionId;
+      });
+
+      if (alreadyLinked) {
+        throw ArgumentError(
+          'Esta transação já está vinculada a outra conta a pagar.',
+        );
+      }
+    }
+
     final index = _bills.indexWhere(
       (item) => item.id == bill.id,
     );
@@ -174,6 +192,8 @@ class PlanningStore extends ChangeNotifier {
       linkedTransactionId: status == BillStatus.paid
           ? linkedTransactionId ?? currentBill.linkedTransactionId
           : null,
+      linkedPendingTransactionId:
+          currentBill.linkedPendingTransactionId,
       notes: currentBill.notes,
     );
 
