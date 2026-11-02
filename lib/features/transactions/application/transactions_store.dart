@@ -12,6 +12,7 @@ class TransactionsStore extends ChangeNotifier {
   final List<FinancialTransaction> _transactions = [];
 
   bool _isLoaded = false;
+  bool _isLoading = false;
 
   List<FinancialTransaction> get transactions {
     return List.unmodifiable(_transactions);
@@ -49,32 +50,37 @@ class TransactionsStore extends ChangeNotifier {
   }
 
   Future<void> loadTransactions() async {
-    if (_isLoaded) return;
+    if (_isLoaded || _isLoading) return;
 
-    final preferences = await SharedPreferences.getInstance();
-    final storedData = preferences.getString(_storageKey);
+    _isLoading = true;
 
-    if (storedData != null) {
-      try {
-        final decodedData = jsonDecode(storedData) as List<dynamic>;
+    try {
+      final preferences = await SharedPreferences.getInstance();
+      final storedData = preferences.getString(_storageKey);
 
-        _transactions
-          ..clear()
-          ..addAll(
-            decodedData.map(
-              (item) => FinancialTransaction.fromJson(
-                Map<String, dynamic>.from(item as Map),
+      if (storedData != null) {
+        try {
+          final decodedData = jsonDecode(storedData) as List<dynamic>;
+
+          _transactions
+            ..clear()
+            ..addAll(
+              decodedData.map(
+                (item) => FinancialTransaction.fromJson(
+                  Map<String, dynamic>.from(item as Map),
+                ),
               ),
-            ),
-          );
-      } catch (error) {
-        debugPrint('Erro ao carregar movimentações: $error');
-        _transactions.clear();
+            );
+        } catch (error) {
+          debugPrint('Erro ao carregar movimentações: $error');
+          _transactions.clear();
+        }
       }
+    } finally {
+      _isLoading = false;
+      _isLoaded = true;
+      notifyListeners();
     }
-
-    _isLoaded = true;
-    notifyListeners();
   }
 
   Future<void> _saveTransactions() async {

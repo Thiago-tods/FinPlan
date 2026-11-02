@@ -1,10 +1,13 @@
-
 import 'package:flutter/material.dart';
 
 import '../core/widgets/placeholder_page.dart';
 import '../features/accounts/application/accounts_store.dart';
 import '../features/accounts/presentation/pages/accounts_page.dart';
 import '../features/dashboard/presentation/pages/dashboard_page.dart';
+import '../features/planning/application/planning_store.dart';
+import '../features/planning/presentation/pages/planning_page.dart';
+import '../features/transactions/application/transactions_store.dart';
+import '../features/transactions/presentation/pages/transactions_page.dart';
 
 class HomeShell extends StatefulWidget {
   final bool isDark;
@@ -24,35 +27,61 @@ class _HomeShellState extends State<HomeShell> {
   int _selectedIndex = 0;
 
   final AccountsStore _accountsStore = AccountsStore();
+  final TransactionsStore _transactionsStore = TransactionsStore();
+  final PlanningStore _planningStore = PlanningStore();
+
+  bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    _accountsStore.loadAccounts();
+    _loadInitialData();
+  }
+
+  Future<void> _loadInitialData() async {
+    await Future.wait([
+      _accountsStore.loadAccounts(),
+      _transactionsStore.loadTransactions(),
+      _planningStore.loadBills(),
+    ]);
+
+    if (!mounted) return;
+
+    setState(() {
+      _isLoading = false;
+    });
   }
 
   @override
   void dispose() {
     _accountsStore.dispose();
+    _transactionsStore.dispose();
+    _planningStore.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final pages = [
-      DashboardPage(accountsStore: _accountsStore),
-      AccountsPage(accountsStore: _accountsStore),
-      const PlaceholderPage(
-        title: 'Movimentações',
-        icon: Icons.swap_horiz_rounded,
+      DashboardPage(
+        accountsStore: _accountsStore,
+        transactionsStore: _transactionsStore,
+      ),
+      AccountsPage(
+        accountsStore: _accountsStore,
+      ),
+      TransactionsPage(
+        accountsStore: _accountsStore,
+        transactionsStore: _transactionsStore,
       ),
       const PlaceholderPage(
         title: 'Investimentos',
         icon: Icons.trending_up_rounded,
       ),
-      const PlaceholderPage(
-        title: 'Planejamento',
-        icon: Icons.calendar_month_rounded,
+      PlanningPage(
+        planningStore: _planningStore,
+        accountsStore: _accountsStore,
+        transactionsStore: _transactionsStore,
       ),
     ];
 
@@ -82,10 +111,12 @@ class _HomeShellState extends State<HomeShell> {
           const SizedBox(width: 8),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: pages,
-      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : IndexedStack(
+              index: _selectedIndex,
+              children: pages,
+            ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,
         onDestinationSelected: (index) {

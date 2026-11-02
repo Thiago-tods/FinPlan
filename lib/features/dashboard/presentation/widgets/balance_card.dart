@@ -2,13 +2,16 @@
 import 'package:flutter/material.dart';
 
 import '../../../accounts/application/accounts_store.dart';
+import '../../../transactions/application/transactions_store.dart';
 
 class BalanceCard extends StatelessWidget {
   final AccountsStore accountsStore;
+  final TransactionsStore transactionsStore;
 
   const BalanceCard({
     super.key,
     required this.accountsStore,
+    required this.transactionsStore,
   });
 
   String _formatCurrency(double value) {
@@ -24,8 +27,21 @@ class BalanceCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: accountsStore,
+      listenable: Listenable.merge([
+        accountsStore,
+        transactionsStore,
+      ]),
       builder: (context, child) {
+        final totalBalance = accountsStore.accounts.fold(
+          0.0,
+          (total, account) {
+            return total + transactionsStore.balanceForAccount(
+              accountId: account.id,
+              initialBalance: account.initialBalance,
+            );
+          },
+        );
+
         return Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
@@ -55,7 +71,7 @@ class BalanceCard extends StatelessWidget {
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  _formatCurrency(accountsStore.totalBalance),
+                  _formatCurrency(totalBalance),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 32,
