@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum BankAccountType {
+  checking
+  savings
+  payment
+  investment
+}
+
+enum TransactionType {
+  income
+  expense
+}
+
+enum TransactionStatus {
+  pending
+  completed
+  cancelled
+}
+
+enum TransactionCategory {
+  salary
+  freelance
+  investment
+  food
+  housing
+  transportation
+  health
+  education
+  entertainment
+  shopping
+  bills
+  taxes
+  other
+}
+
+enum BillCategory {
+  housing
+  utilities
+  food
+  transport
+  health
+  education
+  subscriptions
+  taxes
+  other
+}
+
+enum BillStatus {
+  pending
+  paid
+  cancelled
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  accounts     BankAccount[]
+  transactions FinancialTransaction[]
+  bills        PayableBill[]
+}
+
+model BankAccount {
+  id             String          @id
+  userId         String
+  bankName       String
+  nickname       String
+  type           BankAccountType
+  initialBalance Decimal         @db.Decimal(15, 2)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  user         User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions FinancialTransaction[]
+  bills        PayableBill[]
+
+  @@index([userId])
+}
+
+model FinancialTransaction {
+  id              String              @id
+  userId          String
+  description     String
+  amount          Decimal             @db.Decimal(15, 2)
+  type            TransactionType
+  category        TransactionCategory
+  accountId       String
+  transactionDate DateTime
+  dueDate         DateTime
+  status          TransactionStatus   @default(pending)
+  notes           String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account         BankAccount  @relation(fields: [accountId], references: [id], onDelete: Restrict)
+  linkedAsPending PayableBill? @relation("BillPendingTransaction")
+  linkedAsPaid    PayableBill? @relation("BillPaidTransaction")
+
+  @@index([userId])
+  @@index([accountId])
+  @@index([userId, transactionDate])
+  @@index([userId, status])
+}
+
+model PayableBill {
+  id                         String       @id
+  userId                     String
+  description                String
+  amount                     Decimal      @db.Decimal(15, 2)
+  category                   BillCategory
+  dueDate                    DateTime
+  discountDeadline           DateTime?
+  discountAmount             Decimal?     @db.Decimal(15, 2)
+  status                     BillStatus   @default(pending)
+  paidAt                     DateTime?
+  accountId                  String?
+  linkedPendingTransactionId String?      @unique
+  linkedTransactionId        String?      @unique
+  notes                      String       @default("")
+  createdAt                  DateTime     @default(now())
+  updatedAt                  DateTime     @updatedAt
+
+  user                     User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account                  BankAccount?          @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  linkedPendingTransaction FinancialTransaction? @relation("BillPendingTransaction", fields: [linkedPendingTransactionId], references: [id], onDelete: SetNull)
+  linkedTransaction        FinancialTransaction? @relation("BillPaidTransaction", fields: [linkedTransactionId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, dueDate])
+  @@index([userId, status])
+  @@index([accountId])
+}

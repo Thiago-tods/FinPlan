@@ -1,0 +1,26 @@
+﻿# Environment variables and secrets
+.env*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+coverage/
+*.tsbuildinfo
+
+# Prisma generated client
+src/generated/prisma/
+generated/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Local AI and editor tooling
+.agents/
+.claude/
+.windsurf/
+AGENTS.md
+skills-lock.json
