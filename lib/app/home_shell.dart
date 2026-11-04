@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 
 import '../core/widgets/placeholder_page.dart';
@@ -12,11 +13,13 @@ import '../features/transactions/presentation/pages/transactions_page.dart';
 class HomeShell extends StatefulWidget {
   final bool isDark;
   final VoidCallback onToggleTheme;
+  final VoidCallback onLogout;
 
   const HomeShell({
     super.key,
     required this.isDark,
     required this.onToggleTheme,
+    required this.onLogout,
   });
 
   @override
@@ -107,6 +110,11 @@ class _HomeShellState extends State<HomeShell> {
             icon: Icon(
               widget.isDark ? Icons.light_mode : Icons.dark_mode,
             ),
+          ),
+          IconButton(
+            tooltip: 'Sair da conta',
+            onPressed: widget.onLogout,
+            icon: const Icon(Icons.logout_rounded),
           ),
           const SizedBox(width: 8),
         ],

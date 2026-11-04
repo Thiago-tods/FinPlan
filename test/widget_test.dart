@@ -1,21 +1,27 @@
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:finplan/app/finplan_app.dart';
+import 'package:finplan/features/auth/application/auth_store.dart';
+import 'package:finplan/features/auth/presentation/pages/login_page.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  setUp(() {
-    SharedPreferences.setMockInitialValues({});
-  });
+  testWidgets('FinPlan login page starts', (tester) async {
+    final authStore = AuthStore();
 
-  testWidgets('FinPlan application starts', (tester) async {
-    await tester.pumpWidget(const FinPlanApp());
+    addTearDown(authStore.dispose);
 
-    await tester.pumpAndSettle();
+    await tester.pumpWidget(
+      MaterialApp(
+        home: LoginPage(authStore: authStore),
+      ),
+    );
 
     expect(find.text('FinPlan'), findsOneWidget);
-    expect(find.text('Olá, seja bem-vindo!'), findsOneWidget);
+    expect(find.text('Entre na sua conta para continuar.'), findsOneWidget);
+    expect(find.text('E-mail'), findsOneWidget);
+    expect(find.text('Senha'), findsOneWidget);
+    expect(find.text('Entrar'), findsOneWidget);
   });
 }

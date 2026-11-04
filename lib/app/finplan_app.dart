@@ -2,6 +2,8 @@
 import 'package:flutter/material.dart';
 
 import '../core/services/theme_preferences.dart';
+import '../features/auth/application/auth_store.dart';
+import '../features/auth/presentation/pages/login_page.dart';
 import 'home_shell.dart';
 import 'theme/app_theme.dart';
 
@@ -13,6 +15,8 @@ class FinPlanApp extends StatefulWidget {
 }
 
 class _FinPlanAppState extends State<FinPlanApp> {
+  final AuthStore _authStore = AuthStore();
+
   ThemeMode _themeMode = ThemeMode.light;
   bool _isInitialized = false;
 
@@ -20,6 +24,7 @@ class _FinPlanAppState extends State<FinPlanApp> {
   void initState() {
     super.initState();
     _loadTheme();
+    _authStore.restoreSession();
   }
 
   Future<void> _loadTheme() async {
@@ -41,18 +46,20 @@ class _FinPlanAppState extends State<FinPlanApp> {
     }
   }
 
-  Future<void> _toggleTheme() async {
-    final newTheme = _themeMode == ThemeMode.light
-        ? ThemeMode.dark
-        : ThemeMode.light;
+  void _toggleTheme() {
+    final isDark = _themeMode != ThemeMode.dark;
 
     setState(() {
-      _themeMode = newTheme;
+      _themeMode = isDark ? ThemeMode.dark : ThemeMode.light;
     });
 
-    await ThemePreferences.saveIsDark(
-      newTheme == ThemeMode.dark,
-    );
+    ThemePreferences.saveIsDark(isDark);
+  }
+
+  @override
+  void dispose() {
+    _authStore.dispose();
+    super.dispose();
   }
 
   @override
@@ -63,16 +70,28 @@ class _FinPlanAppState extends State<FinPlanApp> {
       themeMode: _themeMode,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
-      home: _isInitialized
-          ? HomeShell(
-              isDark: _themeMode == ThemeMode.dark,
-              onToggleTheme: _toggleTheme,
-            )
-          : const Scaffold(
+      home: AnimatedBuilder(
+        animation: _authStore,
+        builder: (context, _) {
+          if (!_isInitialized || _authStore.isCheckingSession) {
+            return const Scaffold(
               body: Center(
                 child: CircularProgressIndicator(),
               ),
-            ),
+            );
+          }
+
+          if (_authStore.isAuthenticated) {
+            return HomeShell(
+              isDark: _themeMode == ThemeMode.dark,
+              onToggleTheme: _toggleTheme,
+              onLogout: _authStore.logout,
+            );
+          }
+
+          return LoginPage(authStore: _authStore);
+        },
+      ),
     );
   }
 }
