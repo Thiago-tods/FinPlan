@@ -9,6 +9,8 @@ import { AppModule } from '../src/app.module.js';
 describe('Autenticação (e2e)', () => {
   let app: INestApplication;
   let accessToken: string;
+  let refreshToken: string;
+  let rotatedRefreshToken: string;
   let registeredEmail: string;
 
   beforeAll(async () => {
@@ -52,7 +54,7 @@ describe('Autenticação (e2e)', () => {
     expect(response.body.user).not.toHaveProperty('passwordHash');
   });
 
-  it('deve autenticar o usuário e retornar um JWT', async () => {
+  it('deve autenticar o usuário e retornar os dois tokens', async () => {
     const response = await request(app.getHttpServer())
       .post('/auth/login')
       .send({
@@ -62,11 +64,14 @@ describe('Autenticação (e2e)', () => {
       .expect(201);
 
     expect(response.body.accessToken).toBeDefined();
+    expect(response.body.refreshToken).toBeDefined();
     expect(response.body.tokenType).toBe('Bearer');
     expect(response.body.expiresIn).toBe('15m');
+    expect(response.body.refreshExpiresAt).toBeDefined();
     expect(response.body.user.email).toBe(registeredEmail);
 
     accessToken = response.body.accessToken;
+    refreshToken = response.body.refreshToken;
   });
 
   it('deve retornar os dados do usuário autenticado', async () => {
@@ -83,6 +88,81 @@ describe('Autenticação (e2e)', () => {
   it('não deve permitir acesso sem autenticação', async () => {
     await request(app.getHttpServer())
       .get('/auth/me')
+      .expect(401);
+  });
+
+  it('deve renovar os tokens e invalidar o refresh token anterior', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken,
+      })
+      .expect(201);
+
+    expect(response.body.accessToken).toBeDefined();
+    expect(response.body.refreshToken).toBeDefined();
+    expect(response.body.refreshToken).not.toBe(refreshToken);
+    expect(response.body.tokenType).toBe('Bearer');
+    expect(response.body.expiresIn).toBe('15m');
+    expect(response.body.user.email).toBe(registeredEmail);
+
+    rotatedRefreshToken = response.body.refreshToken;
+  });
+
+  it('deve rejeitar a reutilização do refresh token anterior', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken,
+      })
+      .expect(401);
+  });
+
+  it('deve revogar o novo token quando detectar reutilização do anterior', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken: rotatedRefreshToken,
+      })
+      .expect(401);
+  });
+
+  it('não deve aceitar um refresh token inexistente', async () => {
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken: 'token-invalido-com-tamanho-suficiente-123456789',
+      })
+      .expect(401);
+  });
+
+  it('deve encerrar a sessão e revogar seu refresh token', async () => {
+    const loginResponse = await request(app.getHttpServer())
+      .post('/auth/login')
+      .send({
+        email: registeredEmail,
+        password: 'SenhaSegura123!',
+      })
+      .expect(201);
+
+    const logoutRefreshToken = loginResponse.body.refreshToken;
+
+    const logoutResponse = await request(app.getHttpServer())
+      .post('/auth/logout')
+      .send({
+        refreshToken: logoutRefreshToken,
+      })
+      .expect(201);
+
+    expect(logoutResponse.body.message).toBe(
+      'Sessão encerrada com sucesso.',
+    );
+
+    await request(app.getHttpServer())
+      .post('/auth/refresh')
+      .send({
+        refreshToken: logoutRefreshToken,
+      })
       .expect(401);
   });
 });

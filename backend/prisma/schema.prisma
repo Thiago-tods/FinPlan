@@ -1,3 +1,4 @@
+
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -70,6 +71,24 @@ model User {
   accounts     BankAccount[]
   transactions FinancialTransaction[]
   bills        PayableBill[]
+  authSessions AuthSession[]
+}
+
+model AuthSession {
+  id                String    @id @default(cuid())
+  userId            String
+  familyId          String
+  tokenHash         String    @unique
+  expiresAt         DateTime
+  revokedAt         DateTime?
+  replacedByTokenId String?
+  createdAt         DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@index([expiresAt])
 }
 
 model BankAccount {
