@@ -1,6 +1,7 @@
 
 import 'package:flutter/material.dart';
 
+import '../core/network/api_client.dart';
 import '../core/services/theme_preferences.dart';
 import '../features/auth/application/auth_store.dart';
 import '../features/auth/presentation/pages/login_page.dart';
@@ -23,6 +24,9 @@ class _FinPlanAppState extends State<FinPlanApp> {
   @override
   void initState() {
     super.initState();
+
+    ApiClient.onUnauthorized = _authStore.handleSessionExpired;
+
     _loadTheme();
     _authStore.restoreSession();
   }
@@ -58,7 +62,10 @@ class _FinPlanAppState extends State<FinPlanApp> {
 
   @override
   void dispose() {
+    ApiClient.onUnauthorized = null;
+
     _authStore.dispose();
+
     super.dispose();
   }
 

@@ -67,10 +67,7 @@ class PayableBill {
   final DateTime? paidAt;
   final String? accountId;
 
-  // Transação pendente que representa esta obrigação.
   final String? linkedPendingTransactionId;
-
-  // Transação efetivamente registrada após o pagamento.
   final String? linkedTransactionId;
 
   final String notes;
@@ -118,6 +115,7 @@ class PayableBill {
         discountDeadline != null;
   }
 
+  // Formato utilizado pelo armazenamento local antigo.
   Map<String, dynamic> toJson() {
     return {
       'id': id,
@@ -136,11 +134,40 @@ class PayableBill {
     };
   }
 
+  // Formato enviado à API NestJS.
+  Map<String, dynamic> toApiJson() {
+    return {
+      'description': description.trim(),
+      'amount': amount,
+      'category': category.name,
+      'dueDate': dueDate.toIso8601String(),
+      'discountDeadline': discountDeadline?.toIso8601String(),
+      'discountAmount': discountAmount,
+      'accountId': accountId,
+      'linkedPendingTransactionId': linkedPendingTransactionId,
+      'notes': notes,
+    };
+  }
+
+  static double? _parseDouble(dynamic value) {
+    if (value == null) return null;
+
+    if (value is num) {
+      return value.toDouble();
+    }
+
+    if (value is String) {
+      return double.parse(value);
+    }
+
+    throw FormatException('Valor monetário inválido: $value');
+  }
+
   factory PayableBill.fromJson(Map<String, dynamic> json) {
     return PayableBill(
       id: json['id'] as String,
       description: json['description'] as String,
-      amount: (json['amount'] as num).toDouble(),
+      amount: _parseDouble(json['amount'])!,
       category: BillCategory.values.firstWhere(
         (item) => item.name == json['category'],
         orElse: () => BillCategory.other,
@@ -149,7 +176,7 @@ class PayableBill {
       discountDeadline: json['discountDeadline'] == null
           ? null
           : DateTime.parse(json['discountDeadline'] as String),
-      discountAmount: (json['discountAmount'] as num?)?.toDouble(),
+      discountAmount: _parseDouble(json['discountAmount']),
       status: BillStatus.values.firstWhere(
         (item) => item.name == json['status'],
         orElse: () => BillStatus.pending,

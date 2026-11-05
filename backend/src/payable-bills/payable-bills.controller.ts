@@ -69,7 +69,13 @@ export class PayableBillsController {
   ) {
     return this.payableBillsService.pay(user.userId, id, dto);
   }
-
+  @Post(':id/cancel')
+  cancel(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.payableBillsService.cancel(user.userId, id);
+  }
   @Delete(':id')
   remove(
     @CurrentUser() user: AuthenticatedUser,

@@ -123,13 +123,31 @@ class FinancialTransaction {
     };
   }
 
+  Map<String, dynamic> toApiJson() {
+    return {
+      'description': description,
+      'amount': amount,
+      'type': type.name,
+      'category': category.name,
+      'accountId': accountId,
+      'transactionDate': transactionDate.toIso8601String(),
+      'dueDate': dueDate.toIso8601String(),
+      'status': status.name,
+      'notes': notes,
+    };
+  }
+
   factory FinancialTransaction.fromJson(
     Map<String, dynamic> json,
   ) {
+    final amount = json['amount'];
+
     return FinancialTransaction(
       id: json['id'] as String,
       description: json['description'] as String,
-      amount: (json['amount'] as num).toDouble(),
+      amount: amount is num
+          ? amount.toDouble()
+          : double.parse(amount as String),
       type: TransactionType.values.byName(
         json['type'] as String,
       ),

@@ -1,21 +1,25 @@
-
-import 'dart:convert';
-
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/network/api_client.dart';
 import '../domain/entities/bank_account.dart';
 
 class AccountsStore extends ChangeNotifier {
-  static const String _storageKey = 'finplan_bank_accounts';
+  AccountsStore({ApiClient? apiClient})
+      : _apiClient = apiClient ?? ApiClient();
+
+  final ApiClient _apiClient;
 
   final List<BankAccount> _accounts = [];
 
   bool _isLoaded = false;
+  String? _errorMessage;
 
   List<BankAccount> get accounts => List.unmodifiable(_accounts);
 
   bool get isLoaded => _isLoaded;
+
+  String? get errorMessage => _errorMessage;
 
   double get totalBalance {
     return _accounts.fold(
@@ -25,63 +29,124 @@ class AccountsStore extends ChangeNotifier {
   }
 
   Future<void> loadAccounts() async {
-    final preferences = await SharedPreferences.getInstance();
+    _isLoaded = false;
+    _errorMessage = null;
+    notifyListeners();
 
-    final storedData = preferences.getString(_storageKey);
+    try {
+      final response = await _apiClient.dio.get('/accounts');
 
-    if (storedData != null) {
-      try {
-        final decodedData = jsonDecode(storedData) as List<dynamic>;
+      final data = response.data as List<dynamic>;
 
-        _accounts
-          ..clear()
-          ..addAll(
-            decodedData.map(
-              (item) => BankAccount.fromJson(
-                Map<String, dynamic>.from(item as Map),
-              ),
+      _accounts
+        ..clear()
+        ..addAll(
+          data.map(
+            (item) => BankAccount.fromJson(
+              Map<String, dynamic>.from(item as Map),
             ),
-          );
-      } catch (error) {
-        debugPrint('Erro ao carregar contas: $error');
+          ),
+        );
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível carregar suas contas.',
+      );
+
+      debugPrint('Erro ao carregar contas: ${error.message}');
+    } catch (error) {
+      _errorMessage = 'Ocorreu um erro ao carregar suas contas.';
+      debugPrint('Erro inesperado ao carregar contas: $error');
+    } finally {
+      _isLoaded = true;
+      notifyListeners();
+    }
+  }
+
+  Future<BankAccount> saveAccount(BankAccount account) async {
+    _errorMessage = null;
+
+    try {
+      final index = _accounts.indexWhere(
+        (item) => item.id == account.id,
+      );
+
+      final Response<dynamic> response;
+
+      if (index >= 0) {
+        response = await _apiClient.dio.patch(
+          '/accounts/${account.id}',
+          data: account.toApiJson(),
+        );
+      } else {
+        response = await _apiClient.dio.post(
+          '/accounts',
+          data: account.toApiJson(),
+        );
       }
+
+      final savedAccount = BankAccount.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+
+      if (index >= 0) {
+        _accounts[index] = savedAccount;
+      } else {
+        _accounts.insert(0, savedAccount);
+      }
+
+      notifyListeners();
+
+      return savedAccount;
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível salvar a conta.',
+      );
+
+      notifyListeners();
+      rethrow;
     }
-
-    _isLoaded = true;
-    notifyListeners();
-  }
-
-  Future<void> _saveAccounts() async {
-    final preferences = await SharedPreferences.getInstance();
-
-    final encodedData = jsonEncode(
-      _accounts.map((account) => account.toJson()).toList(),
-    );
-
-    await preferences.setString(_storageKey, encodedData);
-  }
-
-  Future<void> saveAccount(BankAccount account) async {
-    final index = _accounts.indexWhere(
-      (item) => item.id == account.id,
-    );
-
-    if (index >= 0) {
-      _accounts[index] = account;
-    } else {
-      _accounts.add(account);
-    }
-
-    notifyListeners();
-
-    await _saveAccounts();
   }
 
   Future<void> deleteAccount(String id) async {
-    _accounts.removeWhere((account) => account.id == id);
+    _errorMessage = null;
 
-    notifyListeners();
+    try {
+      await _apiClient.dio.delete('/accounts/$id');
 
-    await _saveAccounts();
+      _accounts.removeWhere((account) => account.id == id);
+
+      notifyListeners();
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível excluir a conta.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  String _getErrorMessage(
+    DioException error,
+    String fallback,
+  ) {
+    final responseData = error.response?.data;
+
+    if (responseData is Map<String, dynamic>) {
+      final message = responseData['message'];
+
+      if (message is String) {
+        return message;
+      }
+
+      if (message is List && message.isNotEmpty) {
+        return message.join('\n');
+      }
+    }
+
+    return fallback;
   }
 }

@@ -4,7 +4,6 @@ import 'package:flutter/material.dart';
 import '../../../accounts/application/accounts_store.dart';
 import '../../../accounts/domain/entities/bank_account.dart';
 import '../../../transactions/application/transactions_store.dart';
-import '../../../transactions/domain/entities/transaction.dart';
 import '../../application/planning_store.dart';
 import '../../domain/entities/early_payment_recommendation.dart';
 import '../../domain/entities/payable_bill.dart';
@@ -256,53 +255,14 @@ class _PlanningPageState extends State<PlanningPage> {
     if (confirmed != true || selectedAccountId == null || !mounted) return;
 
     try {
-      FinancialTransaction? linkedTransaction;
-
-      if (bill.linkedPendingTransactionId != null) {
-        for (final existingTransaction
-            in widget.transactionsStore.transactions) {
-          if (existingTransaction.id == bill.linkedPendingTransactionId) {
-            linkedTransaction = existingTransaction;
-            break;
-          }
-        }
-
-        if (linkedTransaction == null ||
-            linkedTransaction.status != TransactionStatus.pending ||
-            linkedTransaction.type != TransactionType.expense) {
-          throw StateError(
-            'A despesa pendente vinculada não foi encontrada ou não está mais disponível.',
-          );
-        }
-      }
-
-      final transactionId =
-          linkedTransaction?.id ?? 'bill-${bill.id}';
-
-      final transaction = FinancialTransaction(
-        id: transactionId,
-        description: bill.description,
-        amount: paymentAmount,
-        type: TransactionType.expense,
-        category: _mapCategory(bill.category),
-        accountId: selectedAccountId!,
-        transactionDate: paymentDate,
-        dueDate: bill.dueDate,
-        status: TransactionStatus.completed,
-        notes: linkedTransaction?.notes ??
-            'Pagamento gerado pelo Planejamento do FinPlan. '
-                'Conta: ${bill.id}',
-      );
-
-      await widget.transactionsStore.saveTransaction(transaction);
-
-      await widget.planningStore.updateBillStatus(
+      await widget.planningStore.payBill(
         bill.id,
-        BillStatus.paid,
+        accountId: selectedAccountId!,
         paidAt: paymentDate,
-        accountId: selectedAccountId,
-        linkedTransactionId: transactionId,
+        category: bill.category,
       );
+
+      await widget.transactionsStore.loadTransactions(force: true);
 
       if (!mounted) return;
 
@@ -317,30 +277,6 @@ class _PlanningPageState extends State<PlanningPage> {
       );
     }
   }
-
-  TransactionCategory _mapCategory(BillCategory category) {
-    switch (category) {
-      case BillCategory.housing:
-        return TransactionCategory.housing;
-      case BillCategory.utilities:
-        return TransactionCategory.bills;
-      case BillCategory.food:
-        return TransactionCategory.food;
-      case BillCategory.transport:
-        return TransactionCategory.transportation;
-      case BillCategory.health:
-        return TransactionCategory.health;
-      case BillCategory.education:
-        return TransactionCategory.education;
-      case BillCategory.subscriptions:
-        return TransactionCategory.bills;
-      case BillCategory.taxes:
-        return TransactionCategory.taxes;
-      case BillCategory.other:
-        return TransactionCategory.other;
-    }
-  }
-
   Future<void> _cancelBill(PayableBill bill) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -364,7 +300,21 @@ class _PlanningPageState extends State<PlanningPage> {
 
     if (confirmed != true || !mounted) return;
 
-    await widget.planningStore.updateBillStatus(bill.id, BillStatus.cancelled);
+    try {
+      await widget.planningStore.cancelBill(bill.id);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Conta cancelada com sucesso.')),
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao cancelar conta: $error')),
+      );
+    }
   }
 
   Future<void> _deleteBill(PayableBill bill) async {
@@ -564,4 +514,5 @@ class _PlanningPageState extends State<PlanningPage> {
     );
   }
 }
+
 

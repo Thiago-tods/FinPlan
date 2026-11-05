@@ -1,22 +1,28 @@
 
-import 'dart:convert';
-
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/network/api_client.dart';
 import '../domain/entities/payable_bill.dart';
 
 class PlanningStore extends ChangeNotifier {
-  static const String _storageKey = 'finplan_payable_bills';
+  PlanningStore({ApiClient? apiClient})
+      : _apiClient = apiClient ?? ApiClient();
 
+  final ApiClient _apiClient;
   final List<PayableBill> _bills = [];
 
   bool _isLoaded = false;
   bool _isLoading = false;
+  String? _errorMessage;
 
   List<PayableBill> get bills => List.unmodifiable(_bills);
 
   bool get isLoaded => _isLoaded;
+
+  bool get isLoading => _isLoading;
+
+  String? get errorMessage => _errorMessage;
 
   double get totalPending {
     return _bills
@@ -46,33 +52,39 @@ class PlanningStore extends ChangeNotifier {
     return _bills.where((bill) => bill.isOverdue).length;
   }
 
-  Future<void> loadBills() async {
-    if (_isLoaded || _isLoading) return;
+  Future<void> loadBills({bool force = false}) async {
+    if (_isLoading || (_isLoaded && !force)) return;
 
     _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
 
     try {
-      final preferences = await SharedPreferences.getInstance();
-      final storedData = preferences.getString(_storageKey);
+      final response = await _apiClient.dio.get('/payable-bills');
 
-      if (storedData != null) {
-        try {
-          final decodedData = jsonDecode(storedData) as List<dynamic>;
+      final data = response.data as List<dynamic>;
 
-          _bills
-            ..clear()
-            ..addAll(
-              decodedData.map(
-                (item) => PayableBill.fromJson(
-                  Map<String, dynamic>.from(item as Map),
-                ),
-              ),
-            );
-        } catch (error) {
-          debugPrint('Erro ao carregar contas a pagar: $error');
-          _bills.clear();
-        }
-      }
+      _bills
+        ..clear()
+        ..addAll(
+          data.map(
+            (item) => PayableBill.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          ),
+        );
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível carregar suas contas a pagar.',
+      );
+
+      debugPrint('Erro ao carregar contas a pagar: ${error.message}');
+      rethrow;
+    } catch (error) {
+      _errorMessage = 'Ocorreu um erro ao carregar suas contas a pagar.';
+      debugPrint('Erro inesperado ao carregar contas: $error');
+      rethrow;
     } finally {
       _isLoading = false;
       _isLoaded = true;
@@ -80,23 +92,168 @@ class PlanningStore extends ChangeNotifier {
     }
   }
 
-  Future<void> _saveBills() async {
-    final preferences = await SharedPreferences.getInstance();
+  Future<PayableBill> saveBill(PayableBill bill) async {
+    _validateBill(bill);
+    _validateLinkedTransaction(bill);
 
-    final encodedData = jsonEncode(
-      _bills.map((bill) => bill.toJson()).toList(),
-    );
+    _errorMessage = null;
 
-    await preferences.setString(_storageKey, encodedData);
+    try {
+      final index = _bills.indexWhere(
+        (item) => item.id == bill.id,
+      );
+
+      final Response<dynamic> response;
+
+      if (index >= 0) {
+        response = await _apiClient.dio.patch(
+          '/payable-bills/${bill.id}',
+          data: bill.toApiJson(),
+        );
+      } else {
+        response = await _apiClient.dio.post(
+          '/payable-bills',
+          data: bill.toApiJson(),
+        );
+      }
+
+      final savedBill = PayableBill.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+
+      if (index >= 0) {
+        _bills[index] = savedBill;
+      } else {
+        _bills.insert(0, savedBill);
+      }
+
+      notifyListeners();
+
+      return savedBill;
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível salvar a conta.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
   }
 
-  Future<void> saveBill(PayableBill bill) async {
-    if (bill.description.trim().isEmpty) {
-      throw ArgumentError('A descrição não pode estar vazia.');
+  Future<void> deleteBill(String id) async {
+    _errorMessage = null;
+
+    try {
+      await _apiClient.dio.delete('/payable-bills/$id');
+
+      _bills.removeWhere((bill) => bill.id == id);
+
+      notifyListeners();
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível excluir a conta.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<PayableBill> cancelBill(String id) async {
+    _errorMessage = null;
+
+    try {
+      final response = await _apiClient.dio.post(
+        '/payable-bills/$id/cancel',
+      );
+
+      final cancelledBill = PayableBill.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+
+      _replaceBill(cancelledBill);
+
+      return cancelledBill;
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível cancelar a conta.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  Future<PayableBill> payBill(
+    String id, {
+    required String accountId,
+    required DateTime paidAt,
+    required BillCategory category,
+  }) async {
+    _errorMessage = null;
+
+    try {
+      final response = await _apiClient.dio.post(
+        '/payable-bills/$id/pay',
+        data: {
+          'accountId': accountId,
+          'paidAt': paidAt.toIso8601String(),
+          'category': category.name,
+        },
+      );
+
+      final responseData = Map<String, dynamic>.from(
+        response.data as Map,
+      );
+
+      final billData = Map<String, dynamic>.from(
+        responseData['bill'] as Map,
+      );
+
+      final paidBill = PayableBill.fromJson(billData);
+
+      _replaceBill(paidBill);
+
+      return paidBill;
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível registrar o pagamento.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  void _replaceBill(PayableBill bill) {
+    final index = _bills.indexWhere(
+      (item) => item.id == bill.id,
+    );
+
+    if (index >= 0) {
+      _bills[index] = bill;
+    } else {
+      _bills.insert(0, bill);
     }
 
-    if (!bill.amount.isFinite || bill.amount <= 0) {
-      throw ArgumentError('O valor deve ser maior que zero.');
+    notifyListeners();
+  }
+
+  void _validateBill(PayableBill bill) {
+    if (bill.description.trim().length < 2) {
+      throw ArgumentError(
+        'A descrição deve possuir pelo menos dois caracteres.',
+      );
+    }
+
+    if (!bill.amount.isFinite ||
+        bill.amount <= 0 ||
+        bill.amount > 9999999999999.99) {
+      throw ArgumentError('O valor informado é inválido.');
     }
 
     if (bill.discountAmount != null) {
@@ -118,88 +275,40 @@ class PlanningStore extends ChangeNotifier {
         );
       }
     }
-
-    final linkedPendingTransactionId =
-        bill.linkedPendingTransactionId;
-
-    if (linkedPendingTransactionId != null) {
-      final alreadyLinked = _bills.any((existingBill) {
-        return existingBill.id != bill.id &&
-            existingBill.linkedPendingTransactionId ==
-                linkedPendingTransactionId;
-      });
-
-      if (alreadyLinked) {
-        throw ArgumentError(
-          'Esta transação já está vinculada a outra conta a pagar.',
-        );
-      }
-    }
-
-    final index = _bills.indexWhere(
-      (item) => item.id == bill.id,
-    );
-
-    if (index >= 0) {
-      _bills[index] = bill;
-    } else {
-      _bills.add(bill);
-    }
-
-    notifyListeners();
-
-    await _saveBills();
   }
 
-  Future<void> deleteBill(String id) async {
-    _bills.removeWhere((bill) => bill.id == id);
+  void _validateLinkedTransaction(PayableBill bill) {
+    final linkedId = bill.linkedPendingTransactionId;
 
-    notifyListeners();
+    if (linkedId == null) return;
 
-    await _saveBills();
+    final alreadyLinked = _bills.any((existingBill) {
+      return existingBill.id != bill.id &&
+          existingBill.linkedPendingTransactionId == linkedId;
+    });
+
+    if (alreadyLinked) {
+      throw ArgumentError(
+        'Esta transação já está vinculada a outra conta a pagar.',
+      );
+    }
   }
 
-  Future<void> updateBillStatus(
-    String id,
-    BillStatus status, {
-    DateTime? paidAt,
-    String? accountId,
-    String? linkedTransactionId,
-  }) async {
-    final index = _bills.indexWhere(
-      (bill) => bill.id == id,
-    );
+  String _getErrorMessage(
+    DioException error,
+    String fallback,
+  ) {
+    final responseData = error.response?.data;
 
-    if (index == -1) return;
+    if (responseData is Map<String, dynamic>) {
+      final message = responseData['message'];
 
-    final currentBill = _bills[index];
+      if (message is String) return message;
 
-    _bills[index] = PayableBill(
-      id: currentBill.id,
-      description: currentBill.description,
-      amount: currentBill.amount,
-      category: currentBill.category,
-      dueDate: currentBill.dueDate,
-      discountDeadline: currentBill.discountDeadline,
-      discountAmount: currentBill.discountAmount,
-      status: status,
-      paidAt: status == BillStatus.paid
-          ? paidAt ?? DateTime.now()
-          : null,
-      accountId: status == BillStatus.paid
-          ? accountId ?? currentBill.accountId
-          : null,
-      linkedTransactionId: status == BillStatus.paid
-          ? linkedTransactionId ?? currentBill.linkedTransactionId
-          : null,
-      linkedPendingTransactionId:
-          currentBill.linkedPendingTransactionId,
-      notes: currentBill.notes,
-    );
+      if (message is List) return message.join('\n');
+    }
 
-    notifyListeners();
-
-    await _saveBills();
+    return fallback;
   }
 
   List<PayableBill> billsForMonth(int year, int month) {

@@ -1,24 +1,31 @@
 
-import 'dart:convert';
-
+import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../../../core/network/api_client.dart';
 import '../domain/entities/transaction.dart';
 
 class TransactionsStore extends ChangeNotifier {
-  static const String _storageKey = 'finplan_transactions';
+  TransactionsStore({ApiClient? apiClient})
+      : _apiClient = apiClient ?? ApiClient();
+
+  final ApiClient _apiClient;
 
   final List<FinancialTransaction> _transactions = [];
 
   bool _isLoaded = false;
   bool _isLoading = false;
+  String? _errorMessage;
 
   List<FinancialTransaction> get transactions {
     return List.unmodifiable(_transactions);
   }
 
   bool get isLoaded => _isLoaded;
+
+  bool get isLoading => _isLoading;
+
+  String? get errorMessage => _errorMessage;
 
   double get totalIncome {
     return _transactions
@@ -49,33 +56,37 @@ class TransactionsStore extends ChangeNotifier {
         .fold(0.0, (total, transaction) => total + transaction.amount);
   }
 
-  Future<void> loadTransactions() async {
-    if (_isLoaded || _isLoading) return;
+  Future<void> loadTransactions({bool force = false}) async {
+    if (_isLoading || (_isLoaded && !force)) return;
 
     _isLoading = true;
+    _errorMessage = null;
+    notifyListeners();
 
     try {
-      final preferences = await SharedPreferences.getInstance();
-      final storedData = preferences.getString(_storageKey);
+      final response = await _apiClient.dio.get('/transactions');
 
-      if (storedData != null) {
-        try {
-          final decodedData = jsonDecode(storedData) as List<dynamic>;
+      final data = response.data as List<dynamic>;
 
-          _transactions
-            ..clear()
-            ..addAll(
-              decodedData.map(
-                (item) => FinancialTransaction.fromJson(
-                  Map<String, dynamic>.from(item as Map),
-                ),
-              ),
-            );
-        } catch (error) {
-          debugPrint('Erro ao carregar movimentações: $error');
-          _transactions.clear();
-        }
-      }
+      _transactions
+        ..clear()
+        ..addAll(
+          data.map(
+            (item) => FinancialTransaction.fromJson(
+              Map<String, dynamic>.from(item as Map),
+            ),
+          ),
+        );
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível carregar suas movimentações.',
+      );
+
+      debugPrint('Erro ao carregar movimentações: ${error.message}');
+    } catch (error) {
+      _errorMessage = 'Ocorreu um erro ao carregar suas movimentações.';
+      debugPrint('Erro inesperado ao carregar movimentações: $error');
     } finally {
       _isLoading = false;
       _isLoaded = true;
@@ -83,22 +94,10 @@ class TransactionsStore extends ChangeNotifier {
     }
   }
 
-  Future<void> _saveTransactions() async {
-    final preferences = await SharedPreferences.getInstance();
-
-    final encodedData = jsonEncode(
-      _transactions
-          .map((transaction) => transaction.toJson())
-          .toList(),
-    );
-
-    await preferences.setString(_storageKey, encodedData);
-  }
-
-  Future<void> saveTransaction(
+  Future<FinancialTransaction> saveTransaction(
     FinancialTransaction transaction,
   ) async {
-    if (transaction.amount <= 0) {
+    if (transaction.amount <= 0 || !transaction.amount.isFinite) {
       throw ArgumentError('O valor deve ser maior que zero.');
     }
 
@@ -110,29 +109,71 @@ class TransactionsStore extends ChangeNotifier {
       throw ArgumentError('Uma conta bancária deve ser selecionada.');
     }
 
-    final index = _transactions.indexWhere(
-      (item) => item.id == transaction.id,
-    );
+    _errorMessage = null;
 
-    if (index >= 0) {
-      _transactions[index] = transaction;
-    } else {
-      _transactions.add(transaction);
+    try {
+      final index = _transactions.indexWhere(
+        (item) => item.id == transaction.id,
+      );
+
+      final Response<dynamic> response;
+
+      if (index >= 0) {
+        response = await _apiClient.dio.patch(
+          '/transactions/${transaction.id}',
+          data: transaction.toApiJson(),
+        );
+      } else {
+        response = await _apiClient.dio.post(
+          '/transactions',
+          data: transaction.toApiJson(),
+        );
+      }
+
+      final savedTransaction = FinancialTransaction.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
+
+      if (index >= 0) {
+        _transactions[index] = savedTransaction;
+      } else {
+        _transactions.insert(0, savedTransaction);
+      }
+
+      notifyListeners();
+
+      return savedTransaction;
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível salvar a movimentação.',
+      );
+
+      notifyListeners();
+      rethrow;
     }
-
-    notifyListeners();
-
-    await _saveTransactions();
   }
 
   Future<void> deleteTransaction(String id) async {
-    _transactions.removeWhere(
-      (transaction) => transaction.id == id,
-    );
+    _errorMessage = null;
 
-    notifyListeners();
+    try {
+      await _apiClient.dio.delete('/transactions/$id');
 
-    await _saveTransactions();
+      _transactions.removeWhere(
+        (transaction) => transaction.id == id,
+      );
+
+      notifyListeners();
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível excluir a movimentação.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
   }
 
   Future<void> updateTransactionStatus(
@@ -145,24 +186,32 @@ class TransactionsStore extends ChangeNotifier {
 
     if (index == -1) return;
 
-    final updatedTransaction = FinancialTransaction(
-      id: _transactions[index].id,
-      description: _transactions[index].description,
-      amount: _transactions[index].amount,
-      type: _transactions[index].type,
-      category: _transactions[index].category,
-      accountId: _transactions[index].accountId,
-      transactionDate: _transactions[index].transactionDate,
-      dueDate: _transactions[index].dueDate,
-      status: status,
-      notes: _transactions[index].notes,
-    );
+    _errorMessage = null;
 
-    _transactions[index] = updatedTransaction;
+    try {
+      final response = await _apiClient.dio.patch(
+        '/transactions/$id',
+        data: {
+          'status': status.name,
+        },
+      );
 
-    notifyListeners();
+      final updatedTransaction = FinancialTransaction.fromJson(
+        Map<String, dynamic>.from(response.data as Map),
+      );
 
-    await _saveTransactions();
+      _transactions[index] = updatedTransaction;
+
+      notifyListeners();
+    } on DioException catch (error) {
+      _errorMessage = _getErrorMessage(
+        error,
+        'Não foi possível atualizar o status da movimentação.',
+      );
+
+      notifyListeners();
+      rethrow;
+    }
   }
 
   double balanceForAccount({
@@ -185,5 +234,26 @@ class TransactionsStore extends ChangeNotifier {
         return balance - transaction.amount;
       },
     );
+  }
+
+  String _getErrorMessage(
+    DioException error,
+    String fallback,
+  ) {
+    final responseData = error.response?.data;
+
+    if (responseData is Map<String, dynamic>) {
+      final message = responseData['message'];
+
+      if (message is String) {
+        return message;
+      }
+
+      if (message is List && message.isNotEmpty) {
+        return message.join('\n');
+      }
+    }
+
+    return fallback;
   }
 }

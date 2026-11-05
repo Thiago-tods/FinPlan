@@ -1,4 +1,3 @@
-
 enum BankAccountType {
   checking,
   savings,
@@ -46,15 +45,26 @@ class BankAccount {
     };
   }
 
+  Map<String, dynamic> toApiJson() {
+    return {
+      'bankName': bankName,
+      'nickname': nickname,
+      'type': type.name,
+      'initialBalance': initialBalance,
+    };
+  }
+
   factory BankAccount.fromJson(Map<String, dynamic> json) {
+    final balance = json['initialBalance'];
+
     return BankAccount(
       id: json['id'] as String,
       bankName: json['bankName'] as String,
       nickname: json['nickname'] as String,
-      type: BankAccountType.values.byName(
-        json['type'] as String,
-      ),
-      initialBalance: (json['initialBalance'] as num).toDouble(),
+      type: BankAccountType.values.byName(json['type'] as String),
+      initialBalance: balance is num
+          ? balance.toDouble()
+          : double.parse(balance as String),
     );
   }
 

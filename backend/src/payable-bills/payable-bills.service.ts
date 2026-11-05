@@ -673,7 +673,35 @@ export class PayableBillsService {
       };
     });
   }
+  async cancel(userId: string, billId: string) {
+    const bill = await this.findOne(userId, billId);
 
+    if (bill.status !== 'pending') {
+      throw new ConflictException(
+        'Somente contas pendentes podem ser canceladas.',
+      );
+    }
+
+    const result = await this.prisma.payableBill.updateMany({
+      where: {
+        id: billId,
+        userId,
+        status: 'pending',
+      },
+      data: {
+        status: 'cancelled',
+        linkedPendingTransactionId: null,
+      },
+    });
+
+    if (result.count !== 1) {
+      throw new ConflictException(
+        'Esta conta já foi paga, cancelada ou está sendo processada.',
+      );
+    }
+
+    return this.findOne(userId, billId);
+  }
   async remove(userId: string, billId: string) {
     const bill = await this.findOne(userId, billId);
 

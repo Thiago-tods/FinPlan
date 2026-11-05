@@ -16,6 +16,8 @@ class AuthStore extends ChangeNotifier {
   bool _isCheckingSession = true;
   String? _errorMessage;
 
+  Future<void>? _sessionExpiryFuture;
+
   AuthUser? get user => _user;
   bool get isLoading => _isLoading;
   bool get isCheckingSession => _isCheckingSession;
@@ -31,8 +33,7 @@ class AuthStore extends ChangeNotifier {
       _user = await _authService.getCurrentUser();
     } on DioException catch (error) {
       if (error.response?.statusCode == 401) {
-        await _authService.logout();
-        _user = null;
+        await handleSessionExpired();
       }
     } catch (_) {
       // Uma falha inesperada não deve apagar um token válido.
@@ -53,9 +54,11 @@ class AuthStore extends ChangeNotifier {
         email: email,
         password: password,
       );
+
       _errorMessage = null;
     } catch (_) {
-      _errorMessage = 'Não foi possível realizar o login. Verifique seus dados.';
+      _errorMessage =
+          'Não foi possível realizar o login. Verifique seus dados.';
       rethrow;
     } finally {
       _setLoading(false);
@@ -75,12 +78,33 @@ class AuthStore extends ChangeNotifier {
         email: email,
         password: password,
       );
+
       _errorMessage = null;
     } catch (_) {
       _errorMessage = 'Não foi possível realizar o cadastro.';
       rethrow;
     } finally {
       _setLoading(false);
+    }
+  }
+
+  Future<void> handleSessionExpired() {
+    return _sessionExpiryFuture ??= _expireSession();
+  }
+
+  Future<void> _expireSession() async {
+    try {
+      await _authService.logout();
+    } catch (_) {
+      // Mesmo se o armazenamento falhar, encerramos a sessão na interface.
+    } finally {
+      _user = null;
+      _errorMessage =
+          'Sua sessão expirou. Entre novamente para continuar.';
+
+      notifyListeners();
+
+      _sessionExpiryFuture = null;
     }
   }
 

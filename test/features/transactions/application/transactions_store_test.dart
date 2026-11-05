@@ -1,25 +1,134 @@
-
+import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:finplan/core/network/api_client.dart';
 import 'package:finplan/features/transactions/application/transactions_store.dart';
 import 'package:finplan/features/transactions/domain/entities/transaction.dart';
 
-void main() {
-  TestWidgetsFlutterBinding.ensureInitialized();
+class FakeTransactionsApi extends Interceptor {
+  final List<Map<String, dynamic>> transactions = [];
 
+  int _nextId = 1;
+
+  @override
+  void onRequest(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  ) {
+    final method = options.method;
+    final path = options.path;
+    final requestOptions = options;
+
+    if (method == 'GET' && path == '/transactions') {
+      handler.resolve(
+        Response(
+          requestOptions: requestOptions,
+          statusCode: 200,
+          data: List<Map<String, dynamic>>.from(transactions),
+        ),
+      );
+      return;
+    }
+
+    if (method == 'POST' && path == '/transactions') {
+      final data = Map<String, dynamic>.from(options.data as Map);
+
+      final savedTransaction = {
+        ...data,
+        'id': 'server-${_nextId++}',
+      };
+
+      transactions.insert(0, savedTransaction);
+
+      handler.resolve(
+        Response(
+          requestOptions: requestOptions,
+          statusCode: 201,
+          data: savedTransaction,
+        ),
+      );
+      return;
+    }
+
+    final id = path.split('/').last;
+    final index = transactions.indexWhere(
+      (transaction) => transaction['id'] == id,
+    );
+
+    if (method == 'PATCH' && index >= 0) {
+      final data = Map<String, dynamic>.from(options.data as Map);
+
+      transactions[index] = {
+        ...transactions[index],
+        ...data,
+      };
+
+      handler.resolve(
+        Response(
+          requestOptions: requestOptions,
+          statusCode: 200,
+          data: transactions[index],
+        ),
+      );
+      return;
+    }
+
+    if (method == 'DELETE' && index >= 0) {
+      transactions.removeAt(index);
+
+      handler.resolve(
+        Response(
+          requestOptions: requestOptions,
+          statusCode: 200,
+          data: {'message': 'Movimentação excluída.'},
+        ),
+      );
+      return;
+    }
+
+    handler.reject(
+      DioException(
+        requestOptions: requestOptions,
+        response: Response(
+          requestOptions: requestOptions,
+          statusCode: 404,
+          data: {'message': 'Movimentação não encontrada.'},
+        ),
+        type: DioExceptionType.badResponse,
+      ),
+    );
+  }
+}
+
+void main() {
   late TransactionsStore store;
+  late FakeTransactionsApi fakeApi;
+  late Dio dio;
 
   setUp(() async {
-    SharedPreferences.setMockInitialValues({});
+    fakeApi = FakeTransactionsApi();
 
-    store = TransactionsStore();
+    dio = Dio(
+      BaseOptions(
+        baseUrl: 'http://localhost',
+      ),
+    );
+
+    dio.interceptors.add(fakeApi);
+
+    final apiClient = ApiClient(
+      dio: dio,
+      enableAuthInterceptor: false,
+    );
+
+    store = TransactionsStore(apiClient: apiClient);
 
     await store.loadTransactions();
   });
 
   tearDown(() {
     store.dispose();
+    dio.close();
   });
 
   FinancialTransaction createTransaction({
@@ -141,10 +250,10 @@ void main() {
         amount: 1000,
       );
 
-      await store.saveTransaction(transaction);
+      final savedTransaction = await store.saveTransaction(transaction);
 
       await store.saveTransaction(
-        transaction.copyWith(amount: 2500),
+        savedTransaction.copyWith(amount: 2500),
       );
 
       expect(store.transactions.length, 1);
@@ -152,7 +261,7 @@ void main() {
     });
 
     test('deve excluir uma movimentação', () async {
-      await store.saveTransaction(
+      final savedTransaction = await store.saveTransaction(
         createTransaction(
           id: '1',
           type: TransactionType.income,
@@ -160,13 +269,13 @@ void main() {
         ),
       );
 
-      await store.deleteTransaction('1');
+      await store.deleteTransaction(savedTransaction.id);
 
       expect(store.transactions, isEmpty);
       expect(store.totalIncome, 0);
     });
 
-    test('deve persistir movimentações localmente', () async {
+    test('deve carregar movimentações retornadas pela API', () async {
       await store.saveTransaction(
         createTransaction(
           id: '1',
@@ -175,7 +284,12 @@ void main() {
         ),
       );
 
-      final newStore = TransactionsStore();
+      final newStore = TransactionsStore(
+        apiClient: ApiClient(
+          dio: dio,
+          enableAuthInterceptor: false,
+        ),
+      );
 
       await newStore.loadTransactions();
 
