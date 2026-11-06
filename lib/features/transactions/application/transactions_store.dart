@@ -1,4 +1,3 @@
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -7,7 +6,7 @@ import '../domain/entities/transaction.dart';
 
 class TransactionsStore extends ChangeNotifier {
   TransactionsStore({ApiClient? apiClient})
-      : _apiClient = apiClient ?? ApiClient();
+    : _apiClient = apiClient ?? ApiClient();
 
   final ApiClient _apiClient;
 
@@ -15,6 +14,10 @@ class TransactionsStore extends ChangeNotifier {
 
   bool _isLoaded = false;
   bool _isLoading = false;
+  bool _forceReloadRequested = false;
+
+  Future<void>? _loadFuture;
+
   String? _errorMessage;
 
   List<FinancialTransaction> get transactions {
@@ -49,49 +52,74 @@ class TransactionsStore extends ChangeNotifier {
 
   double get pendingAmount {
     return _transactions
-        .where(
-          (transaction) =>
-              transaction.status == TransactionStatus.pending,
-        )
+        .where((transaction) => transaction.status == TransactionStatus.pending)
         .fold(0.0, (total, transaction) => total + transaction.amount);
   }
 
   Future<void> loadTransactions({bool force = false}) async {
-    if (_isLoading || (_isLoaded && !force)) return;
+    final activeLoad = _loadFuture;
 
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
+    if (activeLoad != null) {
+      if (force) {
+        _forceReloadRequested = true;
+      }
+
+      await activeLoad;
+      return;
+    }
+
+    if (_isLoaded && !force) return;
+
+    final loadFuture = _performLoad();
+    _loadFuture = loadFuture;
 
     try {
-      final response = await _apiClient.dio.get('/transactions');
+      await loadFuture;
+    } finally {
+      if (identical(_loadFuture, loadFuture)) {
+        _loadFuture = null;
+      }
+    }
+  }
 
-      final data = response.data as List<dynamic>;
+  Future<void> _performLoad() async {
+    do {
+      _forceReloadRequested = false;
+      _isLoading = true;
+      _errorMessage = null;
+      notifyListeners();
 
-      _transactions
-        ..clear()
-        ..addAll(
-          data.map(
-            (item) => FinancialTransaction.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
+      try {
+        final response = await _apiClient.dio.get('/transactions');
+
+        final data = response.data as List<dynamic>;
+
+        final loadedTransactions = data.map(
+          (item) => FinancialTransaction.fromJson(
+            Map<String, dynamic>.from(item as Map),
           ),
         );
-    } on DioException catch (error) {
-      _errorMessage = _getErrorMessage(
-        error,
-        'Não foi possível carregar suas movimentações.',
-      );
 
-      debugPrint('Erro ao carregar movimentações: ${error.message}');
-    } catch (error) {
-      _errorMessage = 'Ocorreu um erro ao carregar suas movimentações.';
-      debugPrint('Erro inesperado ao carregar movimentações: $error');
-    } finally {
-      _isLoading = false;
-      _isLoaded = true;
-      notifyListeners();
-    }
+        _transactions
+          ..clear()
+          ..addAll(loadedTransactions);
+
+        _isLoaded = true;
+      } on DioException catch (error) {
+        _errorMessage = _getErrorMessage(
+          error,
+          'Não foi possível carregar suas movimentações.',
+        );
+
+        debugPrint('Erro ao carregar movimentações: ${error.message}');
+      } catch (error) {
+        _errorMessage = 'Ocorreu um erro ao carregar suas movimentações.';
+        debugPrint('Erro inesperado ao carregar movimentações: $error');
+      } finally {
+        _isLoading = false;
+        notifyListeners();
+      }
+    } while (_forceReloadRequested);
   }
 
   Future<FinancialTransaction> saveTransaction(
@@ -160,9 +188,7 @@ class TransactionsStore extends ChangeNotifier {
     try {
       await _apiClient.dio.delete('/transactions/$id');
 
-      _transactions.removeWhere(
-        (transaction) => transaction.id == id,
-      );
+      _transactions.removeWhere((transaction) => transaction.id == id);
 
       notifyListeners();
     } on DioException catch (error) {
@@ -191,9 +217,7 @@ class TransactionsStore extends ChangeNotifier {
     try {
       final response = await _apiClient.dio.patch(
         '/transactions/$id',
-        data: {
-          'status': status.name,
-        },
+        data: {'status': status.name},
       );
 
       final updatedTransaction = FinancialTransaction.fromJson(
@@ -224,22 +248,16 @@ class TransactionsStore extends ChangeNotifier {
           transaction.status == TransactionStatus.completed,
     );
 
-    return accountTransactions.fold(
-      initialBalance,
-      (balance, transaction) {
-        if (transaction.type == TransactionType.income) {
-          return balance + transaction.amount;
-        }
+    return accountTransactions.fold(initialBalance, (balance, transaction) {
+      if (transaction.type == TransactionType.income) {
+        return balance + transaction.amount;
+      }
 
-        return balance - transaction.amount;
-      },
-    );
+      return balance - transaction.amount;
+    });
   }
 
-  String _getErrorMessage(
-    DioException error,
-    String fallback,
-  ) {
+  String _getErrorMessage(DioException error, String fallback) {
     final responseData = error.response?.data;
 
     if (responseData is Map<String, dynamic>) {

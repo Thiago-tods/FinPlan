@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -9,34 +11,69 @@ class FakeTransactionsApi extends Interceptor {
   final List<Map<String, dynamic>> transactions = [];
 
   int _nextId = 1;
+  int getRequestCount = 0;
+
+  bool failNextGet = false;
+
+  Completer<void>? getRequestStarted;
+  Completer<void>? getRequestGate;
+
+  void _resolveGet(RequestOptions options, RequestInterceptorHandler handler) {
+    if (failNextGet) {
+      failNextGet = false;
+
+      handler.reject(
+        DioException(
+          requestOptions: options,
+          type: DioExceptionType.connectionError,
+          message: 'Falha de conexão simulada.',
+        ),
+      );
+      return;
+    }
+
+    handler.resolve(
+      Response(
+        requestOptions: options,
+        statusCode: 200,
+        data: List<Map<String, dynamic>>.from(transactions),
+      ),
+    );
+  }
 
   @override
-  void onRequest(
-    RequestOptions options,
-    RequestInterceptorHandler handler,
-  ) {
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     final method = options.method;
     final path = options.path;
     final requestOptions = options;
 
     if (method == 'GET' && path == '/transactions') {
-      handler.resolve(
-        Response(
-          requestOptions: requestOptions,
-          statusCode: 200,
-          data: List<Map<String, dynamic>>.from(transactions),
-        ),
-      );
+      getRequestCount++;
+
+      final gate = getRequestGate;
+
+      if (gate != null && !gate.isCompleted) {
+        final started = getRequestStarted;
+
+        if (started != null && !started.isCompleted) {
+          started.complete();
+        }
+
+        gate.future.then((_) {
+          _resolveGet(requestOptions, handler);
+        });
+
+        return;
+      }
+
+      _resolveGet(requestOptions, handler);
       return;
     }
 
     if (method == 'POST' && path == '/transactions') {
       final data = Map<String, dynamic>.from(options.data as Map);
 
-      final savedTransaction = {
-        ...data,
-        'id': 'server-${_nextId++}',
-      };
+      final savedTransaction = {...data, 'id': 'server-${_nextId++}'};
 
       transactions.insert(0, savedTransaction);
 
@@ -58,10 +95,7 @@ class FakeTransactionsApi extends Interceptor {
     if (method == 'PATCH' && index >= 0) {
       final data = Map<String, dynamic>.from(options.data as Map);
 
-      transactions[index] = {
-        ...transactions[index],
-        ...data,
-      };
+      transactions[index] = {...transactions[index], ...data};
 
       handler.resolve(
         Response(
@@ -108,18 +142,11 @@ void main() {
   setUp(() async {
     fakeApi = FakeTransactionsApi();
 
-    dio = Dio(
-      BaseOptions(
-        baseUrl: 'http://localhost',
-      ),
-    );
+    dio = Dio(BaseOptions(baseUrl: 'http://localhost'));
 
     dio.interceptors.add(fakeApi);
 
-    final apiClient = ApiClient(
-      dio: dio,
-      enableAuthInterceptor: false,
-    );
+    final apiClient = ApiClient(dio: dio, enableAuthInterceptor: false);
 
     store = TransactionsStore(apiClient: apiClient);
 
@@ -182,19 +209,11 @@ void main() {
 
     test('deve calcular corretamente o saldo da conta', () async {
       await store.saveTransaction(
-        createTransaction(
-          id: '1',
-          type: TransactionType.income,
-          amount: 4000,
-        ),
+        createTransaction(id: '1', type: TransactionType.income, amount: 4000),
       );
 
       await store.saveTransaction(
-        createTransaction(
-          id: '2',
-          type: TransactionType.expense,
-          amount: 1500,
-        ),
+        createTransaction(id: '2', type: TransactionType.expense, amount: 1500),
       );
 
       final balance = store.balanceForAccount(
@@ -252,9 +271,7 @@ void main() {
 
       final savedTransaction = await store.saveTransaction(transaction);
 
-      await store.saveTransaction(
-        savedTransaction.copyWith(amount: 2500),
-      );
+      await store.saveTransaction(savedTransaction.copyWith(amount: 2500));
 
       expect(store.transactions.length, 1);
       expect(store.totalIncome, 2500);
@@ -262,11 +279,7 @@ void main() {
 
     test('deve excluir uma movimentação', () async {
       final savedTransaction = await store.saveTransaction(
-        createTransaction(
-          id: '1',
-          type: TransactionType.income,
-          amount: 1000,
-        ),
+        createTransaction(id: '1', type: TransactionType.income, amount: 1000),
       );
 
       await store.deleteTransaction(savedTransaction.id);
@@ -277,18 +290,11 @@ void main() {
 
     test('deve carregar movimentações retornadas pela API', () async {
       await store.saveTransaction(
-        createTransaction(
-          id: '1',
-          type: TransactionType.income,
-          amount: 3500,
-        ),
+        createTransaction(id: '1', type: TransactionType.income, amount: 3500),
       );
 
       final newStore = TransactionsStore(
-        apiClient: ApiClient(
-          dio: dio,
-          enableAuthInterceptor: false,
-        ),
+        apiClient: ApiClient(dio: dio, enableAuthInterceptor: false),
       );
 
       await newStore.loadTransactions();
@@ -313,5 +319,60 @@ void main() {
 
       expect(store.transactions, isEmpty);
     });
+
+    test('deve permitir nova tentativa após falha no carregamento', () async {
+      final newStore = TransactionsStore(
+        apiClient: ApiClient(dio: dio, enableAuthInterceptor: false),
+      );
+
+      final initialRequestCount = fakeApi.getRequestCount;
+      fakeApi.failNextGet = true;
+
+      await newStore.loadTransactions();
+
+      expect(newStore.isLoaded, isFalse);
+      expect(newStore.isLoading, isFalse);
+      expect(newStore.errorMessage, isNotNull);
+      expect(fakeApi.getRequestCount, initialRequestCount + 1);
+
+      await newStore.loadTransactions();
+
+      expect(newStore.isLoaded, isTrue);
+      expect(newStore.errorMessage, isNull);
+      expect(fakeApi.getRequestCount, initialRequestCount + 2);
+
+      newStore.dispose();
+    });
+
+    test(
+      'deve executar atualização forçada solicitada durante carregamento',
+      () async {
+        final newStore = TransactionsStore(
+          apiClient: ApiClient(dio: dio, enableAuthInterceptor: false),
+        );
+
+        final initialRequestCount = fakeApi.getRequestCount;
+
+        fakeApi.getRequestStarted = Completer<void>();
+        fakeApi.getRequestGate = Completer<void>();
+
+        final initialLoad = newStore.loadTransactions();
+
+        await fakeApi.getRequestStarted!.future;
+
+        final firstForcedLoad = newStore.loadTransactions(force: true);
+        final secondForcedLoad = newStore.loadTransactions(force: true);
+
+        fakeApi.getRequestGate!.complete();
+
+        await Future.wait([initialLoad, firstForcedLoad, secondForcedLoad]);
+
+        expect(fakeApi.getRequestCount, initialRequestCount + 2);
+        expect(newStore.isLoaded, isTrue);
+        expect(newStore.isLoading, isFalse);
+
+        newStore.dispose();
+      },
+    );
   });
 }

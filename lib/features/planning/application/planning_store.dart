@@ -1,4 +1,3 @@
-
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -6,14 +5,17 @@ import '../../../../core/network/api_client.dart';
 import '../domain/entities/payable_bill.dart';
 
 class PlanningStore extends ChangeNotifier {
-  PlanningStore({ApiClient? apiClient})
-      : _apiClient = apiClient ?? ApiClient();
+  PlanningStore({ApiClient? apiClient}) : _apiClient = apiClient ?? ApiClient();
 
   final ApiClient _apiClient;
   final List<PayableBill> _bills = [];
 
   bool _isLoaded = false;
   bool _isLoading = false;
+  bool _forceReloadRequested = false;
+
+  Future<void>? _loadFuture;
+
   String? _errorMessage;
 
   List<PayableBill> get bills => List.unmodifiable(_bills);
@@ -43,9 +45,7 @@ class PlanningStore extends ChangeNotifier {
   }
 
   int get pendingCount {
-    return _bills
-        .where((bill) => bill.status == BillStatus.pending)
-        .length;
+    return _bills.where((bill) => bill.status == BillStatus.pending).length;
   }
 
   int get overdueCount {
@@ -53,42 +53,82 @@ class PlanningStore extends ChangeNotifier {
   }
 
   Future<void> loadBills({bool force = false}) async {
-    if (_isLoading || (_isLoaded && !force)) return;
+    final activeLoad = _loadFuture;
 
-    _isLoading = true;
-    _errorMessage = null;
-    notifyListeners();
+    if (activeLoad != null) {
+      if (force) {
+        _forceReloadRequested = true;
+      }
+
+      await activeLoad;
+      return;
+    }
+
+    if (_isLoaded && !force) return;
+
+    final loadFuture = _performLoad();
+    _loadFuture = loadFuture;
 
     try {
-      final response = await _apiClient.dio.get('/payable-bills');
-
-      final data = response.data as List<dynamic>;
-
-      _bills
-        ..clear()
-        ..addAll(
-          data.map(
-            (item) => PayableBill.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          ),
-        );
-    } on DioException catch (error) {
-      _errorMessage = _getErrorMessage(
-        error,
-        'Não foi possível carregar suas contas a pagar.',
-      );
-
-      debugPrint('Erro ao carregar contas a pagar: ${error.message}');
-      rethrow;
-    } catch (error) {
-      _errorMessage = 'Ocorreu um erro ao carregar suas contas a pagar.';
-      debugPrint('Erro inesperado ao carregar contas: $error');
-      rethrow;
+      await loadFuture;
     } finally {
-      _isLoading = false;
-      _isLoaded = true;
+      if (identical(_loadFuture, loadFuture)) {
+        _loadFuture = null;
+      }
+    }
+  }
+
+  Future<void> _performLoad() async {
+    Object? lastError;
+    StackTrace? lastStackTrace;
+
+    do {
+      _forceReloadRequested = false;
+      _isLoading = true;
+      _errorMessage = null;
       notifyListeners();
+
+      try {
+        final response = await _apiClient.dio.get('/payable-bills');
+
+        final data = response.data as List<dynamic>;
+
+        final loadedBills = data.map(
+          (item) =>
+              PayableBill.fromJson(Map<String, dynamic>.from(item as Map)),
+        );
+
+        _bills
+          ..clear()
+          ..addAll(loadedBills);
+
+        _isLoaded = true;
+        lastError = null;
+        lastStackTrace = null;
+      } on DioException catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+
+        _errorMessage = _getErrorMessage(
+          error,
+          'Não foi possível carregar suas contas a pagar.',
+        );
+
+        debugPrint('Erro ao carregar contas a pagar: ${error.message}');
+      } catch (error, stackTrace) {
+        lastError = error;
+        lastStackTrace = stackTrace;
+
+        _errorMessage = 'Ocorreu um erro ao carregar suas contas a pagar.';
+        debugPrint('Erro inesperado ao carregar contas: $error');
+      } finally {
+        _isLoading = false;
+        notifyListeners();
+      }
+    } while (_forceReloadRequested);
+
+    if (lastError != null) {
+      Error.throwWithStackTrace(lastError, lastStackTrace!);
     }
   }
 
@@ -99,9 +139,7 @@ class PlanningStore extends ChangeNotifier {
     _errorMessage = null;
 
     try {
-      final index = _bills.indexWhere(
-        (item) => item.id == bill.id,
-      );
+      final index = _bills.indexWhere((item) => item.id == bill.id);
 
       final Response<dynamic> response;
 
@@ -165,9 +203,7 @@ class PlanningStore extends ChangeNotifier {
     _errorMessage = null;
 
     try {
-      final response = await _apiClient.dio.post(
-        '/payable-bills/$id/cancel',
-      );
+      final response = await _apiClient.dio.post('/payable-bills/$id/cancel');
 
       final cancelledBill = PayableBill.fromJson(
         Map<String, dynamic>.from(response.data as Map),
@@ -205,13 +241,9 @@ class PlanningStore extends ChangeNotifier {
         },
       );
 
-      final responseData = Map<String, dynamic>.from(
-        response.data as Map,
-      );
+      final responseData = Map<String, dynamic>.from(response.data as Map);
 
-      final billData = Map<String, dynamic>.from(
-        responseData['bill'] as Map,
-      );
+      final billData = Map<String, dynamic>.from(responseData['bill'] as Map);
 
       final paidBill = PayableBill.fromJson(billData);
 
@@ -230,9 +262,7 @@ class PlanningStore extends ChangeNotifier {
   }
 
   void _replaceBill(PayableBill bill) {
-    final index = _bills.indexWhere(
-      (item) => item.id == bill.id,
-    );
+    final index = _bills.indexWhere((item) => item.id == bill.id);
 
     if (index >= 0) {
       _bills[index] = bill;
@@ -294,10 +324,7 @@ class PlanningStore extends ChangeNotifier {
     }
   }
 
-  String _getErrorMessage(
-    DioException error,
-    String fallback,
-  ) {
+  String _getErrorMessage(DioException error, String fallback) {
     final responseData = error.response?.data;
 
     if (responseData is Map<String, dynamic>) {
@@ -313,9 +340,7 @@ class PlanningStore extends ChangeNotifier {
 
   List<PayableBill> billsForMonth(int year, int month) {
     return _bills.where((bill) {
-      return bill.dueDate.year == year &&
-          bill.dueDate.month == month;
-    }).toList()
-      ..sort((a, b) => a.dueDate.compareTo(b.dueDate));
+      return bill.dueDate.year == year && bill.dueDate.month == month;
+    }).toList()..sort((a, b) => a.dueDate.compareTo(b.dueDate));
   }
 }

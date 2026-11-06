@@ -19,6 +19,7 @@ void main() {
     DateTime? dueDate,
     DateTime? discountDeadline,
     BillStatus status = BillStatus.pending,
+    String? linkedPendingTransactionId,
   }) {
     return PayableBill(
       id: id,
@@ -26,10 +27,10 @@ void main() {
       amount: amount,
       category: BillCategory.utilities,
       dueDate: dueDate ?? DateTime(2026, 11, 10),
-      discountDeadline:
-          discountDeadline ?? DateTime(2026, 11, 5),
+      discountDeadline: discountDeadline ?? DateTime(2026, 11, 5),
       discountAmount: discountAmount,
       status: status,
+      linkedPendingTransactionId: linkedPendingTransactionId,
     );
   }
 
@@ -64,10 +65,7 @@ void main() {
       expect(recommendations, hasLength(1));
       expect(recommendations.first.paymentAmount, 270);
       expect(recommendations.first.savings, 30);
-      expect(
-        recommendations.first.projectedBalanceAfterPayment,
-        730,
-      );
+      expect(recommendations.first.projectedBalanceAfterPayment, 730);
       expect(recommendations.first.minimumReserve, 200);
     });
 
@@ -107,22 +105,13 @@ void main() {
       final recommendations = service.recommend(
         currentBalance: 1000,
         transactions: transactions,
-        bills: [
-          createBill(),
-          otherBill,
-        ],
+        bills: [createBill(), otherBill],
         referenceDate: referenceDate,
       );
 
       expect(recommendations, hasLength(1));
-      expect(
-        recommendations.first.projectedBalanceBeforePayment,
-        1050,
-      );
-      expect(
-        recommendations.first.projectedBalanceAfterPayment,
-        780,
-      );
+      expect(recommendations.first.projectedBalanceBeforePayment, 1050);
+      expect(recommendations.first.projectedBalanceAfterPayment, 780);
     });
 
     test('considera compromissos vencidos como pendentes hoje', () {
@@ -144,25 +133,16 @@ void main() {
       final recommendations = service.recommend(
         currentBalance: 1000,
         transactions: [overdueTransaction],
-        bills: [
-          createBill(),
-          overdueBill,
-        ],
+        bills: [createBill(), overdueBill],
         referenceDate: referenceDate,
       );
 
       expect(recommendations, hasLength(1));
-      expect(
-        recommendations.first.projectedBalanceBeforePayment,
-        700,
-      );
+      expect(recommendations.first.projectedBalanceBeforePayment, 700);
     });
 
     test('não recomenda contas sem desconto', () {
-      final bill = createBill(
-        discountAmount: 0,
-        discountDeadline: null,
-      );
+      final bill = createBill(discountAmount: 0, discountDeadline: null);
 
       final recommendations = service.recommend(
         currentBalance: 1000,
@@ -175,9 +155,7 @@ void main() {
     });
 
     test('não recomenda contas com prazo de desconto vencido', () {
-      final bill = createBill(
-        discountDeadline: DateTime(2026, 11, 1),
-      );
+      final bill = createBill(discountDeadline: DateTime(2026, 11, 1));
 
       final recommendations = service.recommend(
         currentBalance: 1000,
@@ -226,6 +204,30 @@ void main() {
         ),
         throwsArgumentError,
       );
+    });
+
+    test('não desconta novamente transação vinculada à conta analisada', () {
+      final linkedBill = createBill(
+        linkedPendingTransactionId: 'expense-linked',
+      );
+
+      final linkedTransaction = createTransaction(
+        id: 'expense-linked',
+        amount: 300,
+        type: TransactionType.expense,
+        dueDate: DateTime(2026, 11, 4),
+      );
+
+      final recommendations = service.recommend(
+        currentBalance: 1000,
+        transactions: [linkedTransaction],
+        bills: [linkedBill],
+        referenceDate: referenceDate,
+      );
+
+      expect(recommendations, hasLength(1));
+      expect(recommendations.first.projectedBalanceBeforePayment, 1000);
+      expect(recommendations.first.projectedBalanceAfterPayment, 730);
     });
   });
 }

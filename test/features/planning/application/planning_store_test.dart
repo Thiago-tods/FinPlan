@@ -1,3 +1,4 @@
+import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,24 +11,21 @@ class FakePlanningApi extends Interceptor {
   final List<Map<String, dynamic>> bills = [];
 
   int _nextId = 1;
+  int getRequestCount = 0;
+
+  bool failNextGet = false;
+
+  Completer<void>? getRequestStarted;
+  Completer<void>? getRequestGate;
 
   @override
-  void onRequest(
-    RequestOptions options,
-    RequestInterceptorHandler handler,
-  ) {
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
     final method = options.method;
     final path = options.path;
     final requestOptions = options;
 
     if (method == 'GET' && path == '/payable-bills') {
-      handler.resolve(
-        Response(
-          requestOptions: requestOptions,
-          statusCode: 200,
-          data: List<Map<String, dynamic>>.from(bills),
-        ),
-      );
+      _handleGet(requestOptions, handler);
       return;
     }
 
@@ -56,19 +54,12 @@ class FakePlanningApi extends Interceptor {
 
     final parts = path.split('/');
     final id = parts.length > 2 ? parts[2] : '';
-    final index = bills.indexWhere(
-      (bill) => bill['id'] == id,
-    );
+    final index = bills.indexWhere((bill) => bill['id'] == id);
 
-    if (method == 'PATCH' &&
-        parts.length == 3 &&
-        index >= 0) {
+    if (method == 'PATCH' && parts.length == 3 && index >= 0) {
       final data = Map<String, dynamic>.from(options.data as Map);
 
-      bills[index] = {
-        ...bills[index],
-        ...data,
-      };
+      bills[index] = {...bills[index], ...data};
 
       handler.resolve(
         Response(
@@ -80,9 +71,7 @@ class FakePlanningApi extends Interceptor {
       return;
     }
 
-    if (method == 'DELETE' &&
-        parts.length == 3 &&
-        index >= 0) {
+    if (method == 'DELETE' && parts.length == 3 && index >= 0) {
       bills.removeAt(index);
 
       handler.resolve(
@@ -147,9 +136,7 @@ class FakePlanningApi extends Interceptor {
           data: {
             'message': 'Conta paga com sucesso.',
             'bill': bills[index],
-            'payment': {
-              'transactionId': bills[index]['linkedTransactionId'],
-            },
+            'payment': {'transactionId': bills[index]['linkedTransactionId']},
           },
         ),
       );
@@ -157,6 +144,44 @@ class FakePlanningApi extends Interceptor {
     }
 
     _reject(handler, requestOptions, 404, 'Conta não encontrada.');
+  }
+
+  Future<void> _handleGet(
+    RequestOptions requestOptions,
+    RequestInterceptorHandler handler,
+  ) async {
+    getRequestCount++;
+
+    final started = getRequestStarted;
+    if (started != null && !started.isCompleted) {
+      started.complete();
+    }
+
+    final gate = getRequestGate;
+    if (gate != null) {
+      await gate.future;
+    }
+
+    if (failNextGet) {
+      failNextGet = false;
+
+      handler.reject(
+        DioException(
+          requestOptions: requestOptions,
+          type: DioExceptionType.connectionError,
+          message: 'Falha de conexão simulada.',
+        ),
+      );
+      return;
+    }
+
+    handler.resolve(
+      Response(
+        requestOptions: requestOptions,
+        statusCode: 200,
+        data: List<Map<String, dynamic>>.from(bills),
+      ),
+    );
   }
 
   void _reject(
@@ -187,17 +212,12 @@ void main() {
   setUp(() async {
     fakeApi = FakePlanningApi();
 
-    dio = Dio(
-      BaseOptions(baseUrl: 'http://localhost'),
-    );
+    dio = Dio(BaseOptions(baseUrl: 'http://localhost'));
 
     dio.interceptors.add(fakeApi);
 
     store = PlanningStore(
-      apiClient: ApiClient(
-        dio: dio,
-        enableAuthInterceptor: false,
-      ),
+      apiClient: ApiClient(dio: dio, enableAuthInterceptor: false),
     );
 
     await store.loadBills();
@@ -224,16 +244,17 @@ void main() {
     );
   }
 
+  PlanningStore createNewStore() {
+    return PlanningStore(
+      apiClient: ApiClient(dio: dio, enableAuthInterceptor: false),
+    );
+  }
+
   group('PlanningStore', () {
     test('deve carregar contas retornadas pela API', () async {
       await store.saveBill(createBill(amount: 350));
 
-      final newStore = PlanningStore(
-        apiClient: ApiClient(
-          dio: dio,
-          enableAuthInterceptor: false,
-        ),
-      );
+      final newStore = createNewStore();
 
       await newStore.loadBills();
 
@@ -267,48 +288,48 @@ void main() {
       expect(store.totalPending, 200);
     });
 
-    test('não deve permitir vincular a mesma transação a duas contas',
-        () async {
-      await store.saveBill(
-        createBill(linkedPendingTransactionId: 'transaction-1'),
-      );
+    test(
+      'não deve permitir vincular a mesma transação a duas contas',
+      () async {
+        await store.saveBill(
+          createBill(linkedPendingTransactionId: 'transaction-1'),
+        );
 
-      await expectLater(
-        store.saveBill(
+        await expectLater(
+          store.saveBill(
+            createBill(
+              id: 'local-2',
+              linkedPendingTransactionId: 'transaction-1',
+            ),
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+
+        expect(store.bills.length, 1);
+      },
+    );
+
+    test(
+      'deve permitir editar uma conta mantendo seu próprio vínculo',
+      () async {
+        final savedBill = await store.saveBill(
+          createBill(linkedPendingTransactionId: 'transaction-1'),
+        );
+
+        await store.saveBill(
           createBill(
-            id: 'local-2',
+            id: savedBill.id,
+            description: 'Conta atualizada',
             linkedPendingTransactionId: 'transaction-1',
           ),
-        ),
-        throwsA(isA<ArgumentError>()),
-      );
+        );
 
-      expect(store.bills.length, 1);
-    });
+        expect(store.bills.length, 1);
+        expect(store.bills.first.linkedPendingTransactionId, 'transaction-1');
+      },
+    );
 
-    test('deve permitir editar uma conta mantendo seu próprio vínculo',
-        () async {
-      final savedBill = await store.saveBill(
-        createBill(linkedPendingTransactionId: 'transaction-1'),
-      );
-
-      await store.saveBill(
-        createBill(
-          id: savedBill.id,
-          description: 'Conta atualizada',
-          linkedPendingTransactionId: 'transaction-1',
-        ),
-      );
-
-      expect(store.bills.length, 1);
-      expect(
-        store.bills.first.linkedPendingTransactionId,
-        'transaction-1',
-      );
-    });
-
-    test('deve cancelar uma conta e remover seu vínculo pendente',
-        () async {
+    test('deve cancelar uma conta e remover seu vínculo pendente', () async {
       final savedBill = await store.saveBill(
         createBill(linkedPendingTransactionId: 'transaction-1'),
       );
@@ -352,6 +373,71 @@ void main() {
       );
 
       expect(store.bills, isEmpty);
+    });
+
+    test('deve permitir nova tentativa após falha no carregamento', () async {
+      final newStore = createNewStore();
+      fakeApi.failNextGet = true;
+
+      await expectLater(newStore.loadBills(), throwsA(isA<DioException>()));
+
+      expect(newStore.isLoaded, isFalse);
+      expect(newStore.isLoading, isFalse);
+      expect(newStore.errorMessage, isNotNull);
+
+      await newStore.loadBills();
+
+      expect(newStore.isLoaded, isTrue);
+      expect(newStore.isLoading, isFalse);
+      expect(newStore.errorMessage, isNull);
+      expect(fakeApi.getRequestCount, 3);
+
+      newStore.dispose();
+    });
+
+    test(
+      'deve agrupar atualizações forçadas durante um carregamento',
+      () async {
+        final newStore = createNewStore();
+
+        fakeApi.getRequestStarted = Completer<void>();
+        fakeApi.getRequestGate = Completer<void>();
+
+        final initialLoad = newStore.loadBills();
+
+        await fakeApi.getRequestStarted!.future;
+
+        final firstForceLoad = newStore.loadBills(force: true);
+        final secondForceLoad = newStore.loadBills(force: true);
+
+        fakeApi.getRequestGate!.complete();
+
+        await Future.wait([initialLoad, firstForceLoad, secondForceLoad]);
+
+        expect(fakeApi.getRequestCount, 3);
+        expect(newStore.isLoaded, isTrue);
+        expect(newStore.isLoading, isFalse);
+        expect(newStore.errorMessage, isNull);
+
+        newStore.dispose();
+      },
+    );
+
+    test('deve preservar os dados quando uma atualização falhar', () async {
+      final savedBill = await store.saveBill(createBill());
+
+      fakeApi.failNextGet = true;
+
+      await expectLater(
+        store.loadBills(force: true),
+        throwsA(isA<DioException>()),
+      );
+
+      expect(store.bills.length, 1);
+      expect(store.bills.first.id, savedBill.id);
+      expect(store.isLoaded, isTrue);
+      expect(store.isLoading, isFalse);
+      expect(store.errorMessage, isNotNull);
     });
   });
 }

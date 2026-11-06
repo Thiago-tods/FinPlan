@@ -1,4 +1,3 @@
-
 import '../entities/early_payment_recommendation.dart';
 import '../entities/payable_bill.dart';
 import '../../../transactions/domain/entities/transaction.dart';
@@ -114,17 +113,27 @@ class EarlyPaymentService {
   }) {
     var balance = currentBalance;
 
+    // Identifica transações já representadas por contas pendentes.
+    final linkedTransactionIds = bills
+        .where(
+          (bill) =>
+              bill.status == BillStatus.pending &&
+              bill.linkedPendingTransactionId != null,
+        )
+        .map((bill) => bill.linkedPendingTransactionId!)
+        .toSet();
+
     for (final transaction in transactions) {
       if (transaction.status != TransactionStatus.pending) continue;
+
+      // Evita descontar novamente uma transação vinculada a uma conta.
+      if (linkedTransactionIds.contains(transaction.id)) continue;
 
       if (!transaction.amount.isFinite || transaction.amount <= 0) {
         continue;
       }
 
-      final eventDate = _adjustEventDate(
-        transaction.dueDate,
-        startDate,
-      );
+      final eventDate = _adjustEventDate(transaction.dueDate, startDate);
 
       if (eventDate.isAfter(deadline)) continue;
 
@@ -136,17 +145,13 @@ class EarlyPaymentService {
     }
 
     for (final bill in bills) {
-      if (bill.id == excludedBillId ||
-          bill.status != BillStatus.pending) {
+      if (bill.id == excludedBillId || bill.status != BillStatus.pending) {
         continue;
       }
 
       if (!bill.amount.isFinite || bill.amount <= 0) continue;
 
-      final eventDate = _adjustEventDate(
-        bill.dueDate,
-        startDate,
-      );
+      final eventDate = _adjustEventDate(bill.dueDate, startDate);
 
       if (eventDate.isAfter(deadline)) continue;
 
@@ -157,11 +162,7 @@ class EarlyPaymentService {
   }
 
   DateTime _adjustEventDate(DateTime date, DateTime startDate) {
-    final normalizedDate = DateTime(
-      date.year,
-      date.month,
-      date.day,
-    );
+    final normalizedDate = DateTime(date.year, date.month, date.day);
 
     if (normalizedDate.isBefore(startDate)) {
       return startDate;
