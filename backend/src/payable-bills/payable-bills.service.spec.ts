@@ -19,7 +19,7 @@ describe('PayableBillsService', () => {
     userId,
     description: 'Conta de energia',
     amount: 300,
-    category: 'utilities',
+    category: 'utilities' as const,
     dueDate: new Date('2026-11-20T00:00:00.000Z'),
     discountDeadline: null,
     discountAmount: null,
@@ -45,14 +45,15 @@ describe('PayableBillsService', () => {
       findFirst: vi.fn(),
       findMany: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
       delete: vi.fn(),
     },
   };
 
-  const createDto: CreatePayableBillDto = {
+  const createDto = {
     description: '  Conta de energia  ',
     amount: 300,
-    category: 'utilities',
+    category: 'utilities' as const,
     dueDate: '2026-11-20T00:00:00.000Z',
     accountId,
     notes: '  Conta de teste  ',
@@ -70,6 +71,8 @@ describe('PayableBillsService', () => {
     });
 
     prismaMock.financialTransaction.findFirst.mockResolvedValue(null);
+
+    prismaMock.payableBill.updateMany.mockResolvedValue({ count: 1 });
 
     prismaMock.payableBill.findFirst.mockResolvedValue({
       ...bill,
@@ -195,7 +198,7 @@ describe('PayableBillsService', () => {
       const dto: CreatePayableBillDto = {
         description: 'Conta de energia',
         amount: 300,
-        category: 'utilities',
+        category: 'utilities' as const,
         dueDate: '2026-11-20T00:00:00.000Z',
       };
 
@@ -280,18 +283,26 @@ describe('PayableBillsService', () => {
         notes: '  Nova observação  ',
       };
 
+      prismaMock.payableBill.findFirst
+        .mockResolvedValueOnce({ ...bill })
+        .mockResolvedValueOnce({
+          ...bill,
+          description: 'Conta de energia atualizada',
+        });
+
       const result = await service.update(userId, billId, dto);
 
       expect(result.description).toBe('Conta de energia atualizada');
 
-      expect(prismaMock.payableBill.update).toHaveBeenCalledOnce();
+      expect(prismaMock.payableBill.updateMany).toHaveBeenCalledOnce();
 
       const updateCall =
-        prismaMock.payableBill.update.mock.calls[0][0];
+        prismaMock.payableBill.updateMany.mock.calls[0][0];
 
       expect(updateCall.where).toEqual({
         id: billId,
         userId,
+        status: 'pending',
       });
 
       expect(updateCall.data.description).toBe(
@@ -313,7 +324,7 @@ describe('PayableBillsService', () => {
         }),
       ).rejects.toThrow(ConflictException);
 
-      expect(prismaMock.payableBill.update).not.toHaveBeenCalled();
+      expect(prismaMock.payableBill.updateMany).not.toHaveBeenCalled();
     });
 
     it('não deve atualizar uma conta inexistente', async () => {

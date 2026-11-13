@@ -98,7 +98,8 @@ describe('PayableBillsService - pay', () => {
     expect(result.payment.discountApplied).toBe(20);
     expect(result.payment.paidAmount).toBe(180);
 
-    expect(result.bill.status).toBe('paid');
+    expect(result.bill).not.toBeNull();
+    expect(result.bill?.status).toBe('paid');
 
     expect(txMock.financialTransaction.create).toHaveBeenCalledOnce();
 

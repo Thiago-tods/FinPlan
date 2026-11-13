@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { CreatePayableBillDto } from './dto/create-payable-bill.dto.js';
 import { UpdatePayableBillDto } from './dto/update-payable-bill.dto.js';
@@ -13,6 +14,13 @@ import { PayPayableBillDto } from './dto/pay-payable-bill.dto.js';
 @Injectable()
 export class PayableBillsService {
   constructor(private readonly prisma: PrismaService) {}
+
+  private isUniqueConstraintError(error: unknown): boolean {
+    return (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    );
+  }
 
   private async ensureAccountOwnership(
     userId: string,
@@ -222,39 +230,49 @@ export class PayableBillsService {
       }
     }
 
-    return this.prisma.payableBill.create({
-      data: {
-        id: randomUUID(),
-        userId,
-        description,
-        amount,
-        category: dto.category,
-        dueDate,
-        discountDeadline,
-        discountAmount: dto.discountAmount ?? null,
-        accountId: dto.accountId ?? linkedTransactionAccountId,
-        linkedPendingTransactionId:
-          dto.linkedPendingTransactionId ?? null,
-        notes: dto.notes?.trim() ?? '',
-      },
-      select: {
-        id: true,
-        description: true,
-        amount: true,
-        category: true,
-        dueDate: true,
-        discountDeadline: true,
-        discountAmount: true,
-        status: true,
-        paidAt: true,
-        accountId: true,
-        linkedPendingTransactionId: true,
-        linkedTransactionId: true,
-        notes: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    try {
+      return await this.prisma.payableBill.create({
+        data: {
+          id: randomUUID(),
+          userId,
+          description,
+          amount,
+          category: dto.category,
+          dueDate,
+          discountDeadline,
+          discountAmount: dto.discountAmount ?? null,
+          accountId: dto.accountId ?? linkedTransactionAccountId,
+          linkedPendingTransactionId:
+            dto.linkedPendingTransactionId ?? null,
+          notes: dto.notes?.trim() ?? '',
+        },
+        select: {
+          id: true,
+          description: true,
+          amount: true,
+          category: true,
+          dueDate: true,
+          discountDeadline: true,
+          discountAmount: true,
+          status: true,
+          paidAt: true,
+          accountId: true,
+          linkedPendingTransactionId: true,
+          linkedTransactionId: true,
+          notes: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error) {
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(
+          'Esta transação já está vinculada a outra conta a pagar.',
+        );
+      }
+
+      throw error;
+    }
   }
 
   async findAll(userId: string) {
@@ -338,6 +356,7 @@ export class PayableBillsService {
     }
 
     const amount = dto.amount ?? Number(existingBill.amount);
+
     const dueDate = dto.dueDate
       ? new Date(dto.dueDate)
       : existingBill.dueDate;
@@ -394,58 +413,67 @@ export class PayableBillsService {
       }
     }
 
-    return this.prisma.payableBill.update({
-      where: {
-        id: billId,
-        userId,
-      },
-      data: {
-        ...(dto.description !== undefined && {
-          description: dto.description.trim(),
-        }),
-        ...(dto.amount !== undefined && {
-          amount: dto.amount,
-        }),
-        ...(dto.category !== undefined && {
-          category: dto.category,
-        }),
-        ...(dto.dueDate !== undefined && {
-          dueDate,
-        }),
-        ...(dto.discountDeadline !== undefined && {
-          discountDeadline,
-        }),
-        ...(dto.discountAmount !== undefined && {
-          discountAmount,
-        }),
-        ...(dto.accountId !== undefined && {
-          accountId,
-        }),
-        ...(dto.linkedPendingTransactionId !== undefined && {
-          linkedPendingTransactionId,
-        }),
-        ...(dto.notes !== undefined && {
-          notes: dto.notes.trim(),
-        }),
-      },
-      select: {
-        id: true,
-        description: true,
-        amount: true,
-        category: true,
-        dueDate: true,
-        discountDeadline: true,
-        discountAmount: true,
-        status: true,
-        paidAt: true,
-        accountId: true,
-        linkedPendingTransactionId: true,
-        linkedTransactionId: true,
-        notes: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    try {
+      const result = await this.prisma.payableBill.updateMany({
+        where: {
+          id: billId,
+          userId,
+          status: 'pending',
+        },
+        data: {
+          ...(dto.description !== undefined && {
+            description: dto.description.trim(),
+          }),
+          ...(dto.amount !== undefined && {
+            amount: dto.amount,
+          }),
+          ...(dto.category !== undefined && {
+            category: dto.category,
+          }),
+          ...(dto.dueDate !== undefined && {
+            dueDate,
+          }),
+          ...(dto.discountDeadline !== undefined && {
+            discountDeadline,
+          }),
+          ...(dto.discountAmount !== undefined && {
+            discountAmount,
+          }),
+          ...(dto.accountId !== undefined && {
+            accountId,
+          }),
+          ...(dto.linkedPendingTransactionId !== undefined && {
+            linkedPendingTransactionId,
+          }),
+          ...(dto.notes !== undefined && {
+            notes: dto.notes.trim(),
+          }),
+        },
+      });
+
+      if (result.count !== 1) {
+        throw new ConflictException(
+          'Esta conta já foi paga, cancelada ou está sendo processada.',
+        );
+      }
+
+      return this.findOne(userId, billId);
+    } catch (error) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof NotFoundException
+      ) {
+        throw error;
+      }
+
+      if (this.isUniqueConstraintError(error)) {
+        throw new ConflictException(
+          'Esta transação já está vinculada a outra conta a pagar.',
+        );
+      }
+
+      throw error;
+    }
   }
 
   async pay(
@@ -562,7 +590,6 @@ export class PayableBillsService {
 
       const paidAmount = paidAmountCents / 100;
 
-      
       const transactionId =
         pendingTransaction?.id ?? randomUUID();
 
@@ -673,6 +700,7 @@ export class PayableBillsService {
       };
     });
   }
+
   async cancel(userId: string, billId: string) {
     const bill = await this.findOne(userId, billId);
 
@@ -702,6 +730,7 @@ export class PayableBillsService {
 
     return this.findOne(userId, billId);
   }
+
   async remove(userId: string, billId: string) {
     const bill = await this.findOne(userId, billId);
 
@@ -723,4 +752,3 @@ export class PayableBillsService {
     };
   }
 }
-

@@ -1,3 +1,4 @@
+
 import { Type } from 'class-transformer';
 import {
   IsDateString,
@@ -11,10 +12,11 @@ import {
   MaxLength,
   Min,
   MinLength,
+  ValidateIf,
 } from 'class-validator';
 
 export class UpdateTransactionDto {
-  @IsOptional()
+  @ValidateIf((_object, value) => value !== undefined)
   @IsString()
   @MinLength(2)
   @MaxLength(150)
@@ -84,5 +86,5 @@ export class UpdateTransactionDto {
   @IsOptional()
   @IsString()
   @MaxLength(1000)
-  notes?: string;
+  notes?: string | null;
 }

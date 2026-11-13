@@ -203,7 +203,9 @@ export class TransactionsService {
           status: dto.status,
         }),
         ...(dto.notes !== undefined && {
-          notes: dto.notes.trim() || null,
+          notes: dto.notes === null
+            ? null
+            : dto.notes.trim() || null,
         }),
       },
       select: {
