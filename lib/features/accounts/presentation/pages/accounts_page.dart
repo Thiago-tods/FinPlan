@@ -3,14 +3,17 @@ import 'package:flutter/material.dart';
 
 import '../../application/accounts_store.dart';
 import '../../domain/entities/bank_account.dart';
+import '../../../transactions/application/transactions_store.dart';
 import 'account_form_page.dart';
 
 class AccountsPage extends StatefulWidget {
   final AccountsStore accountsStore;
+  final TransactionsStore transactionsStore;
 
   const AccountsPage({
     super.key,
     required this.accountsStore,
+    required this.transactionsStore,
   });
 
   @override
@@ -22,26 +25,18 @@ class _AccountsPageState extends State<AccountsPage> {
     return widget.accountsStore.accounts;
   }
 
+  double _balanceFor(BankAccount account) {
+    return widget.transactionsStore.balanceForAccount(
+      accountId: account.id,
+      initialBalance: account.initialBalance,
+    );
+  }
+
   double get _totalBalance {
-    return widget.accountsStore.totalBalance;
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    widget.accountsStore.addListener(_onAccountsChanged);
-  }
-
-  void _onAccountsChanged() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  @override
-  void dispose() {
-    widget.accountsStore.removeListener(_onAccountsChanged);
-    super.dispose();
+    return _accounts.fold(
+      0.0,
+      (total, account) => total + _balanceFor(account),
+    );
   }
 
   String _formatCurrency(double value) {
@@ -67,6 +62,12 @@ class _AccountsPageState extends State<AccountsPage> {
     }
   }
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
   Future<void> _openAccountForm({BankAccount? account}) async {
     final result = await Navigator.push<BankAccount>(
       context,
@@ -79,7 +80,24 @@ class _AccountsPageState extends State<AccountsPage> {
 
     if (!mounted || result == null) return;
 
-    await widget.accountsStore.saveAccount(result);
+    try {
+      await widget.accountsStore.saveAccount(result);
+
+      if (!mounted) return;
+
+      _showMessage(
+        account == null
+            ? 'Conta cadastrada com sucesso.'
+            : 'Conta atualizada com sucesso.',
+      );
+    } catch (_) {
+      if (!mounted) return;
+
+      _showMessage(
+        widget.accountsStore.errorMessage ??
+            'Não foi possível salvar a conta.',
+      );
+    }
   }
 
   Future<void> _deleteAccount(BankAccount account) async {
@@ -112,15 +130,27 @@ class _AccountsPageState extends State<AccountsPage> {
 
     if (confirmed != true || !mounted) return;
 
-    await widget.accountsStore.deleteAccount(account.id);
+    try {
+      await widget.accountsStore.deleteAccount(account.id);
 
-    if (!mounted) return;
+      if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Conta excluída com sucesso.'),
-      ),
-    );
+      _showMessage('Conta excluída com sucesso.');
+    } catch (_) {
+      if (!mounted) return;
+
+      _showMessage(
+        widget.accountsStore.errorMessage ??
+            'Não foi possível excluir a conta.',
+      );
+    }
+  }
+
+  Future<void> _reloadAccounts() async {
+    await Future.wait([
+      widget.accountsStore.loadAccounts(force: true),
+      widget.transactionsStore.loadTransactions(force: true),
+    ]);
   }
 
   Widget _buildBalanceCard(BuildContext context) {
@@ -216,7 +246,7 @@ class _AccountsPageState extends State<AccountsPage> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-              _formatCurrency(account.initialBalance),
+              _formatCurrency(_balanceFor(account)),
               style: const TextStyle(
                 fontWeight: FontWeight.bold,
                 fontSize: 12,
@@ -282,58 +312,104 @@ class _AccountsPageState extends State<AccountsPage> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    return Scaffold(
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openAccountForm(),
-        icon: const Icon(Icons.add_rounded),
-        label: const Text('Adicionar conta'),
-      ),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 900),
-            child: ListView(
-              padding: const EdgeInsets.all(20),
-              children: [
-                Text(
-                  'Minhas contas',
-                  style: theme.textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
+    return ListenableBuilder(
+      listenable: Listenable.merge([
+        widget.accountsStore,
+        widget.transactionsStore,
+      ]),
+      builder: (context, child) {
+        final accountsError = widget.accountsStore.errorMessage;
+        final transactionsError = widget.transactionsStore.errorMessage;
+
+        return Scaffold(
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () => _openAccountForm(),
+            icon: const Icon(Icons.add_rounded),
+            label: const Text('Adicionar conta'),
+          ),
+          body: SafeArea(
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 900),
+                child: RefreshIndicator(
+                  onRefresh: _reloadAccounts,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.all(20),
+                    children: [
+                      Text(
+                        'Minhas contas',
+                        style: theme.textTheme.headlineSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Gerencie suas instituições financeiras '
+                        'em um único lugar.',
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      _buildBalanceCard(context),
+                      const SizedBox(height: 28),
+                      Text(
+                        'Contas cadastradas',
+                        style: theme.textTheme.titleLarge?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (widget.accountsStore.isLoading && _accounts.isEmpty)
+                        const Padding(
+                          padding: EdgeInsets.all(32),
+                          child: Center(
+                            child: CircularProgressIndicator(),
+                          ),
+                        )
+                      else if (accountsError != null && _accounts.isEmpty)
+                        Column(
+                          children: [
+                            Text(accountsError),
+                            const SizedBox(height: 12),
+                            OutlinedButton.icon(
+                              onPressed: _reloadAccounts,
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('Tentar novamente'),
+                            ),
+                          ],
+                        )
+                      else if (_accounts.isEmpty)
+                        _buildEmptyState(context)
+                      else ...[
+                        if (accountsError != null || transactionsError != null)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: Text(
+                              'Alguns dados podem estar desatualizados. '
+                              'Puxe a tela para baixo para atualizar.',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: theme.colorScheme.error,
+                              ),
+                            ),
+                          ),
+                        ..._accounts.map(
+                          (account) => Padding(
+                            padding: const EdgeInsets.only(bottom: 12),
+                            child: _buildAccountTile(context, account),
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 90),
+                    ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                Text(
-                  'Gerencie suas instituições financeiras '
-                  'em um único lugar.',
-                  style: theme.textTheme.bodyMedium?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 24),
-                _buildBalanceCard(context),
-                const SizedBox(height: 28),
-                Text(
-                  'Contas cadastradas',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (_accounts.isEmpty)
-                  _buildEmptyState(context)
-                else
-                  ..._accounts.map(
-                    (account) => Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: _buildAccountTile(context, account),
-                    ),
-                  ),
-                const SizedBox(height: 90),
-              ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

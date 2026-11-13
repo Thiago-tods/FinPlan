@@ -72,6 +72,7 @@ class _HomeShellState extends State<HomeShell> {
       ),
       AccountsPage(
         accountsStore: _accountsStore,
+        transactionsStore: _transactionsStore,
       ),
       TransactionsPage(
         accountsStore: _accountsStore,

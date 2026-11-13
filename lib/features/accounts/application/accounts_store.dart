@@ -1,3 +1,4 @@
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 
@@ -13,11 +14,17 @@ class AccountsStore extends ChangeNotifier {
   final List<BankAccount> _accounts = [];
 
   bool _isLoaded = false;
+  bool _isLoading = false;
+  bool _forceReloadRequested = false;
+
   String? _errorMessage;
+  Future<void>? _loadFuture;
 
   List<BankAccount> get accounts => List.unmodifiable(_accounts);
 
   bool get isLoaded => _isLoaded;
+
+  bool get isLoading => _isLoading;
 
   String? get errorMessage => _errorMessage;
 
@@ -28,25 +35,64 @@ class AccountsStore extends ChangeNotifier {
     );
   }
 
-  Future<void> loadAccounts() async {
-    _isLoaded = false;
-    _errorMessage = null;
+  Future<void> loadAccounts({bool force = false}) {
+    final currentLoad = _loadFuture;
+
+    if (currentLoad != null) {
+      if (force) {
+        _forceReloadRequested = true;
+      }
+
+      return currentLoad;
+    }
+
+    if (_isLoaded && !force) {
+      return Future.value();
+    }
+
+    final future = Future<void>.microtask(_performLoad);
+
+    _loadFuture = future;
+
+    return future;
+  }
+
+  Future<void> _performLoad() async {
+    _isLoading = true;
     notifyListeners();
+
+    try {
+      do {
+        _forceReloadRequested = false;
+
+        await _loadAccountsFromApi();
+      } while (_forceReloadRequested);
+    } finally {
+      _isLoading = false;
+      _loadFuture = null;
+      notifyListeners();
+    }
+  }
+
+  Future<void> _loadAccountsFromApi() async {
+    _errorMessage = null;
 
     try {
       final response = await _apiClient.dio.get('/accounts');
 
       final data = response.data as List<dynamic>;
 
+      final loadedAccounts = data.map(
+        (item) => BankAccount.fromJson(
+          Map<String, dynamic>.from(item as Map),
+        ),
+      );
+
       _accounts
         ..clear()
-        ..addAll(
-          data.map(
-            (item) => BankAccount.fromJson(
-              Map<String, dynamic>.from(item as Map),
-            ),
-          ),
-        );
+        ..addAll(loadedAccounts);
+
+      _isLoaded = true;
     } on DioException catch (error) {
       _errorMessage = _getErrorMessage(
         error,
@@ -57,9 +103,6 @@ class AccountsStore extends ChangeNotifier {
     } catch (error) {
       _errorMessage = 'Ocorreu um erro ao carregar suas contas.';
       debugPrint('Erro inesperado ao carregar contas: $error');
-    } finally {
-      _isLoaded = true;
-      notifyListeners();
     }
   }
 
